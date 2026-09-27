@@ -2,52 +2,73 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Builder;
+use App\Models\Concerns\HasGeneratedId;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * ตาราง zone — ข้อมูลโซนพื้นที่
+ *
+ * @property string $zone_id
+ * @property string $zone_name
+ * @property int $zone_total_desks
+ */
 class Zone extends Model
 {
-    use HasFactory;
+    /** @use HasFactory<\Database\Factories\ZoneFactory> */
+    use HasFactory, HasGeneratedId;
+
+    protected $table = 'zone';
+
+    protected $primaryKey = 'zone_id';
+
+    public $timestamps = false;
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
 
     protected $fillable = [
-        'code',
-        'name',
-        'department_id',
-        'floor',
-        'description',
-        'sort_order',
-        'is_active',
+        'zone_name',
+        'zone_total_desks',
     ];
 
     protected function casts(): array
     {
         return [
-            'is_active' => 'boolean',
-            'floor' => 'integer',
-            'sort_order' => 'integer',
+            'zone_total_desks' => 'integer',
         ];
     }
 
-    public function department(): BelongsTo
+    public static function idPrefix(): string
     {
-        return $this->belongsTo(Department::class);
+        return 'ZON';
     }
 
     public function desks(): HasMany
     {
-        return $this->hasMany(Desk::class);
+        return $this->hasMany(Desk::class, 'zone_id', 'zone_id');
     }
 
-    public function activeDesks(): HasMany
+    /**
+     * คำนวณ zone_total_desks ใหม่จากจำนวนโต๊ะจริงในโซน
+     * ถูกเรียกอัตโนมัติจาก event ของโมเดล Desk
+     */
+    public function syncDeskTotal(): void
     {
-        return $this->hasMany(Desk::class)->where('is_active', true);
+        $total = $this->desks()->count();
+
+        if ($this->zone_total_desks === $total) {
+            return;
+        }
+
+        $this->forceFill(['zone_total_desks' => $total])->save();
     }
 
-    public function scopeActive(Builder $query): Builder
+    public function usableDesks(): HasMany
     {
-        return $query->where('is_active', true);
+        return $this->hasMany(Desk::class, 'zone_id', 'zone_id')
+            ->where('desk_status', '!=', Desk::STATUS_MAINTENANCE);
     }
 }

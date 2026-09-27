@@ -1,209 +1,168 @@
-<x-app-layout>
-    <x-slot name="header">
-        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            แผนผังที่นั่ง & จองโต๊ะทำงาน
-        </h2>
-    </x-slot>
+@extends('layouts.app')
 
-    <div class="py-8" x-data='seatMap(@js($init))' @click.outside="confirmOpen = false">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <!-- Flash -->
-            <template x-if="alert.success">
-                <div class="mb-4 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 px-4 py-3 text-sm shadow-sm">
-                    <span x-text="alert.success"></span>
-                </div>
-            </template>
-            <template x-if="alert.error">
-                <div class="mb-4 rounded-lg bg-red-50 border border-red-300 text-red-800 px-4 py-3 text-sm shadow-sm">
-                    <span x-text="alert.error"></span>
-                </div>
-            </template>
-            <template x-if="alert.info">
-                <div class="mb-4 rounded-lg bg-sky-50 border border-sky-300 text-sky-800 px-4 py-3 text-sm shadow-sm">
-                    <span x-text="alert.info"></span>
-                </div>
-            </template>
+@section('title', 'ค้นหาและจองโต๊ะ')
 
-            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <!-- Main column -->
-                <div class="lg:col-span-3 space-y-6">
-                    <!-- Controls -->
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                        <div class="flex flex-wrap items-end gap-4">
-                            <div>
-                                <label class="block text-xs font-medium text-gray-500 mb-1">วันที่</label>
-                                <input type="date" x-model="date" :min="minDate" :max="maxDate"
-                                       @change="refresh()"
-                                       class="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border text-sm">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-500 mb-1">ช่วงเวลา</label>
-                                <div class="flex gap-2">
-                                    <template x-for="slot in slots" :key="slot.id">
-                                        <button @click="slotId = slot.id; refresh()"
-                                                class="px-3 py-1.5 rounded-lg text-sm font-medium border transition"
-                                                :class="slotId === slot.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-300'">
-                                            <span x-text="slot.name"></span>
-                                        </button>
-                                    </template>
-                                </div>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-500 mb-1">โซน</label>
-                                <div class="flex gap-2 flex-wrap">
-                                    <button @click="zoneFilter = 'all'"
-                                            class="px-3 py-1.5 rounded-lg text-sm font-medium border transition"
-                                            :class="zoneFilter === 'all' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-300'">ทั้งหมด</button>
-                                    <template x-for="z in zones" :key="z.id">
-                                        <button @click="zoneFilter = z.id"
-                                                class="px-3 py-1.5 rounded-lg text-sm font-medium border transition"
-                                                :class="zoneFilter === z.id ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-300'"
-                                                x-text="z.code"></button>
-                                    </template>
-                                </div>
-                            </div>
-                            <div class="ms-auto flex items-center gap-2 text-xs text-gray-400">
-                                <svg x-show="loading" class="animate-spin h-3.5 w-3.5" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                                </svg>
-                                <span x-show="!loading">อัปเดตอัตโนมัติทุก 15 วิ</span>
-                                <span x-show="loading">กำลังอัปเดต…</span>
-                            </div>
-                        </div>
-                    </div>
+@php
+    $stateMeta = [
+        'available' => ['label' => 'ว่าง', 'dot' => 'bg-emerald-400', 'card' => 'border-emerald-200 bg-emerald-50'],
+        'booked' => ['label' => 'ถูกจอง', 'dot' => 'bg-amber-400', 'card' => 'border-amber-200 bg-amber-50'],
+        'in_use' => ['label' => 'กำลังใช้งาน', 'dot' => 'bg-sky-400', 'card' => 'border-sky-200 bg-sky-50'],
+        'my_booked' => ['label' => 'คุณจองแล้ว', 'dot' => 'bg-indigo-500', 'card' => 'border-indigo-300 bg-indigo-50'],
+        'my_in_use' => ['label' => 'คุณกำลังใช้งาน', 'dot' => 'bg-indigo-600', 'card' => 'border-indigo-400 bg-indigo-100'],
+        'maintenance' => ['label' => 'ปิดซ่อมบำรุง', 'dot' => 'bg-rose-400', 'card' => 'border-rose-200 bg-rose-50'],
+    ];
+@endphp
 
-                    <!-- Zones & map -->
-                    <template x-for="zone in visibleZones()" :key="zone.id">
-                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                            <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                                <div>
-                                    <div class="font-semibold text-gray-800" x-text="zone.name"></div>
-                                    <div class="text-xs text-gray-500">
-                                        <span x-text="zone.code"></span>
-                                        <template x-if="zone.department"> · แผนก <span x-text="zone.department"></span></template>
-                                        <template x-if="zone.floor"> · ชั้น <span x-text="zone.floor"></span></template>
-                                    </div>
-                                </div>
-                                <div class="text-xs text-gray-400">
-                                    <span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>ว่าง</span>
-                                    <span class="inline-flex items-center gap-1 ms-2"><span class="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block"></span>จองแล้ว</span>
-                                    <span class="inline-flex items-center gap-1 ms-2"><span class="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block"></span>ใช้งานอยู่</span>
-                                </div>
-                            </div>
-                            <div class="p-4 overflow-x-auto">
-                                <template x-if="deskList(zone.id).length">
-                                    <div class="relative rounded-lg border border-dashed border-gray-300 bg-gray-50/60"
-                                         :style="'min-width:'+Math.max(deskList(zone.id).length ? Math.max(...deskList(zone.id).map(d=>d.x))*52 : 260, 260)+'px; min-height:'+Math.max(Math.max(...deskList(zone.id).map(d=>d.y))*52, 120)+'px'">
-                                        <template x-for="desk in deskList(zone.id)" :key="desk.id">
-                                            <button type="button"
-                                                    @click="openBook(desk)"
-                                                    class="absolute flex flex-col items-center justify-center rounded-md px-1 text-center shadow-sm transition focus:outline-none"
-                                                    :class="chipClass(statusOf(desk).state)"
-                                                    :style="'left:'+((desk.x-1)*52)+'px; top:'+((desk.y-1)*52)+'px; width:44px; height:44px;'"
-                                                    :title="deskLabel(desk)">
-                                                <span class="text-[10px] font-semibold leading-tight" x-text="desk.code"></span>
-                                                <span x-show="statusOf(desk).state === 'in_use' || statusOf(desk).state === 'my_in_use'" class="block w-1.5 h-1.5 rounded-full bg-white mt-0.5"></span>
-                                            </button>
-                                        </template>
-                                    </div>
-                                </template>
-                                <p x-show="!deskList(zone.id).length" class="text-sm text-gray-400 py-6 text-center">ยังไม่มีโต๊ะในโซนนี้</p>
-                            </div>
-                        </div>
-                    </template>
-                </div>
-
-                <!-- Sidebar -->
-                <div class="space-y-6">
-                    <!-- My bookings today -->
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                        <h3 class="font-semibold text-gray-800 text-sm mb-3">การจองของฉันวันนี้</h3>
-                        <template x-if="!activeBookings.length">
-                            <p class="text-sm text-gray-400">ยังไม่มีการจองโต๊ะวันนี้</p>
-                        </template>
-                        <template x-for="b in activeBookings" :key="b.id">
-                            <div class="border border-indigo-100 bg-indigo-50/50 rounded-lg p-3 mb-2">
-                                <div class="flex items-center justify-between">
-                                    <div>
-                                        <div class="font-semibold text-indigo-800 text-sm" x-text="'โต๊ะ '+b.desk_code"></div>
-                                        <div class="text-xs text-indigo-600" x-text="b.slot"></div>
-                                    </div>
-                                    <template x-if="b.status === 'confirmed'">
-                                        <a :href="'/bookings/'+b.id+'/checkin'" class="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition">
-                                            เช็คอินด้วยรูปถ่าย
-                                        </a>
-                                    </template>
-                                    <template x-if="b.status === 'checked_in'">
-                                        <form :action="'/bookings/'+b.id+'/checkout'" method="POST">
-                                            <input type="hidden" name="_token" :value="document.head.querySelector('meta[name=csrf-token]').content">
-                                            <button class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition">เช็คเอาต์</button>
-                                        </form>
-                                    </template>
-                                </div>
-                                <button class="mt-2 text-xs text-red-500 hover:text-red-700 font-medium" x-show="b.status === 'confirmed'"
-                                        @click="cancel(b.id)">ยกเลิกการจอง</button>
-                            </div>
-                        </template>
-                    </div>
-
-                    <!-- Notifications -->
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <h3 class="font-semibold text-gray-800 text-sm flex items-center gap-1.5">
-                                การแจ้งเตือน
-                                <span x-show="unreadCount > 0" class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold" x-text="unreadCount"></span>
-                            </h3>
-                            <button @click="readAll()" x-show="unreadCount > 0" class="text-xs text-indigo-500 hover:text-indigo-700 font-medium">อ่านทั้งหมด</button>
-                        </div>
-                        <template x-if="!notifications.length">
-                            <p class="text-sm text-gray-400">ไม่มีการแจ้งเตือน</p>
-                        </template>
-                        <div class="space-y-2">
-                            <template x-for="(n, i) in notifications" :key="i">
-                                <div class="text-sm rounded-lg px-3 py-2" :class="n.read ? 'bg-gray-50 text-gray-500' : 'bg-amber-50 text-amber-800'">
-                                    <p x-text="'การจองโต๊ะ '+n.data.desk_code+' วันที่ '+n.data.booking_date+' ('+n.data.slot+') ถูกยกเลิกเนื่องจากเลยเวลาเช็คอิน'"></p>
-                                    <p class="text-[11px] opacity-70" x-text="n.created_at"></p>
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-
-                    <!-- Guide -->
-                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 text-xs text-gray-500 space-y-1.5">
-                        <h3 class="font-semibold text-gray-800 text-sm mb-2">วิธีใช้งาน</h3>
-                        <p>1. เลือกวันที่และช่วงเวลาที่ต้องการ</p>
-                        <p>2. คลิกโต๊ะสีเขียวที่ว่างเพื่อจอง</p>
-                        <p>3. ในวันใช้งานกด "เช็คอินด้วยรูปถ่าย" และถ่าย เซลฟีตามโจทย์ประจำวัน</p>
-                        <p>4. ก่อนกลับกด "เช็คเอาต์" เพื่อคืนโต๊ะ</p>
-                        <p class="text-gray-400 pt-1">* เช็คอินสายเกิน 60 นาที ระบบจะยกเลิกใบจองอัตโนมัติ</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Booking confirm modal -->
-            <template x-if="confirmOpen && selectedDesk">
-                <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50">
-                    <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6" @click.outside="closeBook()">
-                        <h3 class="text-lg font-bold text-gray-800">ยืนยันการจองโต๊ะ</h3>
-                        <p class="mt-4 text-sm text-gray-600" x-if="selectedDesk">
-                            โต๊ะ <span class="font-semibold text-indigo-600" x-text="selectedDesk.code"></span>
-                            วันที่ <span class="font-semibold" x-text="date"></span>
-                            ช่วงเวลา <span class="font-semibold" x-text="slotName(slotId)"></span>
-                        </p>
-                        <p class="mt-3 text-xs text-gray-400">จองแล้วกดเช็คอินในช่วงเวลาที่ใช้งานได้ตั้งแต่ก่อนเวลาเริ่ม 60 นาที</p>
-                        <div class="mt-6 flex justify-end gap-3">
-                            <button @click="closeBook()" class="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100">ยกเลิก</button>
-                            <button @click="confirmBook()" :disabled="submitting"
-                                    class="px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
-                                <span x-show="!submitting">ยืนยันการจอง</span>
-                                <span x-show="submitting">กำลังจอง…</span>
-                            </button>
-                        </div>
-                        <p x-show="bookError" class="mt-3 text-sm text-red-600" x-text="bookError"></p>
-                    </div>
-                </div>
-            </template>
+@section('content')
+    <form method="GET" action="{{ route('dashboard') }}"
+          class="mb-6 grid gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div>
+            <label for="date" class="mb-1 block text-xs font-medium text-gray-600">วันที่</label>
+            <input id="date" type="date" name="date" value="{{ $date->toDateString() }}"
+                   min="{{ $minDate }}" max="{{ $maxDate }}"
+                   class="w-full rounded-lg border-gray-300 text-sm" />
         </div>
+
+        <div>
+            <label for="time_slot" class="mb-1 block text-xs font-medium text-gray-600">ช่วงเวลา</label>
+            <select id="time_slot" name="time_slot" class="w-full rounded-lg border-gray-300 text-sm">
+                @foreach ($slots as $option)
+                    <option value="{{ $option->name }}" @selected($option->name === $slot->name)>
+                        {{ $option->name }} ({{ $option->start }} - {{ $option->end }})
+                    </option>
+                @endforeach
+            </select>
+        </div>
+
+        <div>
+            <label for="zone_id" class="mb-1 block text-xs font-medium text-gray-600">โซน</label>
+            <select id="zone_id" name="zone_id" class="w-full rounded-lg border-gray-300 text-sm">
+                <option value="">ทุกโซน</option>
+                @foreach ($allZones as $option)
+                    <option value="{{ $option->zone_id }}" @selected($option->zone_id === $zoneId)>
+                        {{ $option->zone_name }}
+                    </option>
+                @endforeach
+            </select>
+        </div>
+
+        <div class="flex items-end gap-2 sm:col-span-2 lg:col-span-2">
+            <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                ค้นหา
+            </button>
+            <a href="{{ route('dashboard') }}" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                ล้างตัวกรอง
+            </a>
+        </div>
+    </form>
+
+    <div class="mb-4 flex flex-wrap items-center gap-3 text-xs text-gray-600">
+        <span class="font-medium text-gray-700">สถานะโต๊ะ:</span>
+        @foreach ($stateMeta as $key => $meta)
+            <span class="inline-flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-full {{ $meta['dot'] }}"></span>{{ $meta['label'] }}
+            </span>
+        @endforeach
     </div>
-</x-app-layout>
+
+    <div class="grid gap-4 lg:grid-cols-3">
+        @forelse ($zones as $zone)
+            <section class="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
+                <header class="mb-3 flex items-center justify-between">
+                    <h2 class="font-semibold text-gray-800">{{ $zone->zone_name }}</h2>
+                    <span class="text-xs text-gray-500">
+                        {{ $zone->desks->count() }} โต๊ะ · ใช้งานได้ {{ $zone->desks->reject->isMaintenance()->count() }}
+                    </span>
+                </header>
+
+                @if ($zone->desks->isEmpty())
+                    <p class="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">โซนนี้ยังไม่มีโต๊ะ</p>
+                @else
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                        @foreach ($zone->desks as $desk)
+                            @php($state = $deskStates[$desk->desk_id] ?? ['state' => 'available', 'booking_id' => null, 'mine' => false])
+                            @php($meta = $stateMeta[$state['state']] ?? $stateMeta['available'])
+                            @php($position = $desk->position())
+                            <div class="rounded-lg border-2 p-3 {{ $meta['card'] }}"
+                                 data-desk-id="{{ $desk->desk_id }}"
+                                 data-state="{{ $state['state'] }}">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <p class="text-sm font-semibold text-gray-800">{{ $desk->desk_number }}</p>
+                                        <p class="text-[11px] text-gray-500">ตำแหน่ง {{ $position[0] }},{{ $position[1] }}</p>
+                                    </div>
+                                    <span class="h-2.5 w-2.5 shrink-0 rounded-full {{ $meta['dot'] }}"></span>
+                                </div>
+
+                                <p class="mt-2 text-[11px] font-medium text-gray-600" data-state-label>{{ $meta['label'] }}</p>
+
+                                @if ($state['state'] === 'available')
+                                    <form method="POST" action="{{ route('bookings.store') }}" class="mt-2">
+                                        @csrf
+                                        <input type="hidden" name="desk_id" value="{{ $desk->desk_id }}">
+                                        <input type="hidden" name="booking_date" value="{{ $date->toDateString() }}">
+                                        <input type="hidden" name="time_slot" value="{{ $slot->name }}">
+                                        <button type="submit" class="w-full rounded-lg bg-indigo-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+                                            จองโต๊ะนี้
+                                        </button>
+                                    </form>
+                                @elseif ($state['mine'] && $state['state'] === 'my_booked')
+                                    <a href="{{ route('bookings.mine') }}"
+                                       class="mt-2 block rounded-lg bg-white px-2 py-1.5 text-center text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50">
+                                        ดูใบจอง
+                                    </a>
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+            </section>
+        @empty
+            <div class="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 lg:col-span-2">
+                ไม่พบโซนที่ตรงกับตัวกรอง
+            </div>
+        @endforelse
+
+        <aside class="space-y-4">
+            <section class="rounded-xl border border-gray-200 bg-white p-4">
+                <h2 class="mb-3 font-semibold text-gray-800">การจองของคุณ</h2>
+
+                @forelse ($myBookings as $booking)
+                    <div class="mb-2 rounded-lg border border-gray-200 p-3 last:mb-0">
+                        <p class="text-sm font-semibold text-gray-800">{{ $booking->desk->desk_number }}</p>
+                        <p class="text-xs text-gray-500">{{ $booking->desk->zone->zone_name }}</p>
+                        <span class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold {{ \App\Models\Booking::statusBadge($booking->booking_status) }}">
+                            {{ $booking->statusLabel() }}
+                        </span>
+                    </div>
+                @empty
+                    <p class="rounded-lg bg-gray-50 p-3 text-xs text-gray-500">
+                        ยังไม่มีการจองในวันที่และช่วงเวลานี้
+                    </p>
+                @endforelse
+
+                <a href="{{ route('bookings.mine') }}" class="mt-3 block text-center text-xs font-semibold text-indigo-700 underline">
+                    ดูการจองทั้งหมด
+                </a>
+            </section>
+
+            <section class="rounded-xl border border-gray-200 bg-white p-4 text-xs leading-5 text-gray-600">
+                <h2 class="mb-2 font-semibold text-gray-800">กติกาการจอง</h2>
+                <ul class="list-disc space-y-1 pl-4">
+                    <li>1 คน จองได้ 1 โต๊ะ ต่อ 1 ช่วงเวลา</li>
+                    <li>1 โต๊ะ จองได้ 1 คน ต่อ 1 ช่วงเวลา</li>
+                    <li>ต้องเช็คอินภายใน {{ config('booking.late_grace_minutes') }} นาทีหลังเริ่มเวลา มิฉะนั้นระบบจะยกเลิกอัตโนมัติ</li>
+                    <li>ต้องถ่ายรูปเซลฟี่เพื่อยืนยันการเข้าใช้โต๊ะ</li>
+                    <li>โต๊ะสีเทาคือปิดซ่อมบำรุง จองไม่ได้</li>
+                </ul>
+            </section>
+        </aside>
+    </div>
+@endsection
+
+@push('scripts')
+    <script>
+        window.SEATMAP_STATUS_URL = @json(route('seatmap.status'));
+        window.SEATMAP_META = @json($stateMeta);
+    </script>
+@endpush

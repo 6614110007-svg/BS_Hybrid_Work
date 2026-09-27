@@ -1,90 +1,100 @@
 @extends('layouts.admin')
 
-@section('title', $user ? 'แก้ไขพนักงาน' : 'เพิ่มพนักงาน')
+@section('title', $employee ? 'แก้ไขพนักงาน' : 'เพิ่มพนักงาน')
 
 @section('content')
-    @php $isEdit = (bool) $user; @endphp
+    <form method="POST"
+          action="{{ $employee ? route('admin.employees.update', $employee) : route('admin.employees.store') }}"
+          class="max-w-3xl rounded-xl border border-gray-200 bg-white p-5">
+        @csrf
+        @if ($employee)
+            @method('PUT')
+        @endif
 
-    <div class="max-w-2xl rounded-xl bg-white p-6 shadow-sm border border-gray-200">
-        <form method="POST"
-              action="{{ $isEdit ? route('admin.employees.update', $user) : route('admin.employees.store') }}">
-            @csrf
-            @if ($isEdit)
-                @method('PUT')
-            @endif
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <x-input-label for="name" :value="__('ชื่อ-นามสกุล')" />
-                    <x-text-input id="name" class="mt-1 w-full" name="name" :value="old('name', $user?->name)"
-                        required placeholder="ชื่อเต็มของพนักงาน" />
-                    <x-input-error :messages="$errors->get('name')" class="mt-2" />
-                </div>
-                <div>
-                    <x-input-label for="employee_code" :value="__('รหัสพนักงาน')" />
-                    <x-text-input id="employee_code" class="mt-1 w-full" name="employee_code"
-                        :value="old('employee_code', $user?->employee_code)" placeholder="เช่น EMP-002" />
-                    <x-input-error :messages="$errors->get('employee_code')" class="mt-2" />
-                </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+                <x-input-label for="employee_fullname" value="ชื่อ-นามสกุล" />
+                <x-text-input id="employee_fullname" name="employee_fullname"
+                              :value="old('employee_fullname', $employee?->employee_fullname)" required class="mt-1 block w-full" />
+                <x-input-error :messages="$errors->get('employee_fullname')" class="mt-1" />
             </div>
 
-            <div class="mt-4">
-                <x-input-label for="email" :value="__('อีเมล (ใช้สำหรับเข้าสู่ระบบ)')" />
-                <x-text-input id="email" class="mt-1 w-full" type="email" name="email"
-                    :value="old('email', $user?->email)" required placeholder="อีเมลจริงของพนักงาน" />
-                <x-input-error :messages="$errors->get('email')" class="mt-2" />
+            <div>
+                <x-input-label for="employee_tel" value="เบอร์โทรศัพท์" />
+                <x-text-input id="employee_tel" name="employee_tel"
+                              :value="old('employee_tel', $employee?->employee_tel)" required maxlength="20" class="mt-1 block w-full" />
+                <x-input-error :messages="$errors->get('employee_tel')" class="mt-1" />
             </div>
 
-            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <x-input-label for="department_id" :value="__('แผนก')" />
-                    <select id="department_id" name="department_id"
-                        class="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                        <option value="">-- ไม่ระบุแผนก --</option>
-                        @foreach ($departments as $dept)
-                            <option value="{{ $dept->id }}" @selected(old('department_id', $user?->department_id) == $dept->id)>
-                                {{ $dept->name }}
-                            </option>
-                        @endforeach
-                    </select>
-                    <x-input-error :messages="$errors->get('department_id')" class="mt-2" />
-                </div>
-                <div>
-                    <x-input-label for="phone" :value="__('เบอร์โทร')" />
-                    <x-text-input id="phone" class="mt-1 w-full" name="phone" :value="old('phone', $user?->phone)"
-                        placeholder="เบอร์ติดต่อ" />
-                    <x-input-error :messages="$errors->get('phone')" class="mt-2" />
-                </div>
+            <div>
+                <x-input-label for="employee_email" value="อีเมล (ใช้เข้าสู่ระบบ)" />
+                <x-text-input id="employee_email" name="employee_email" type="email"
+                              :value="old('employee_email', $employee?->employee_email)" required class="mt-1 block w-full" />
+                <x-input-error :messages="$errors->get('employee_email')" class="mt-1" />
             </div>
 
-            <div class="mt-4">
-                <x-input-label for="role" :value="__('บทบาท')" />
-                <select id="role" name="role" required
-                    class="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                    <option value="employee" @selected(old('role', $user?->role ?? 'employee') == 'employee')>พนักงาน (Employee)</option>
-                    <option value="admin" @selected(old('role', $user?->role) == 'admin')>ผู้ดูแลระบบ (Admin)</option>
+            <div>
+                <x-input-label for="department_id" value="แผนก" />
+                <select id="department_id" name="department_id" required class="mt-1 w-full rounded-lg border-gray-300 text-sm">
+                    <option value="">-- เลือกแผนก --</option>
+                    @foreach ($departments as $option)
+                        <option value="{{ $option->department_id }}"
+                                @selected(old('department_id', $employee?->department_id) === $option->department_id)>
+                            {{ $option->department_name }}
+                        </option>
+                    @endforeach
                 </select>
-                <x-input-error :messages="$errors->get('role')" class="mt-2" />
+                <x-input-error :messages="$errors->get('department_id')" class="mt-1" />
             </div>
 
-            @if ($isEdit)
-                <p class="mt-4 rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700">
-                    หลังการแก้ไข จะใช้รหัสผ่านเดิมต่อไป ไม่มีการสร้างรหัสชั่วคราวใหม่
-                </p>
-            @else
-                <p class="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-700">
-                    ระบบจะสร้างรหัสผ่านชั่วคราวให้อัตโนมัติและแสดงเพียงครั้งเดียวหลังบันทึก พนักงานต้องเปลี่ยนรหัสผ่านเมื่อเข้าสู่ระบบครั้งแรก
-                </p>
-            @endif
-
-            <div class="mt-6 flex items-center justify-end gap-3">
-                <a href="{{ route('admin.employees.index') }}"
-                   class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">ยกเลิก</a>
-                <button type="submit"
-                        class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-                    {{ $isEdit ? 'บันทึกการแก้ไข' : 'สร้างบัญชีพนักงาน' }}
-                </button>
+            <div>
+                <x-input-label for="employee_role" value="บทบาท" />
+                <select id="employee_role" name="employee_role" required class="mt-1 w-full rounded-lg border-gray-300 text-sm">
+                    @foreach ($roles as $key => $label)
+                        <option value="{{ $key }}"
+                                @selected(old('employee_role', $employee?->employee_role ?? \App\Models\Employee::ROLE_EMPLOYEE) === $key)>
+                            {{ $label }}
+                        </option>
+                    @endforeach
+                </select>
+                <x-input-error :messages="$errors->get('employee_role')" class="mt-1" />
             </div>
-        </form>
-    </div>
+
+            <div>
+                <x-input-label for="employee_status" value="สถานะ" />
+                <select id="employee_status" name="employee_status" required class="mt-1 w-full rounded-lg border-gray-300 text-sm">
+                    @foreach ($statuses as $key => $label)
+                        <option value="{{ $key }}"
+                                @selected(old('employee_status', $employee?->employee_status ?? \App\Models\Employee::STATUS_ACTIVE) === $key)>
+                            {{ $label }}
+                        </option>
+                    @endforeach
+                </select>
+                <x-input-error :messages="$errors->get('employee_status')" class="mt-1" />
+            </div>
+
+            <div>
+                <x-input-label for="password" value="{{ $employee ? 'รหัสผ่านใหม่ (เว้นว่างไว้ = ไม่เปลี่ยน)' : 'รหัสผ่านเริ่มต้น' }}" />
+                <x-text-input id="password" name="password" type="password" autocomplete="new-password"
+                              :required="! $employee" class="mt-1 block w-full" />
+                <x-input-error :messages="$errors->get('password')" class="mt-1" />
+            </div>
+
+            <div>
+                <x-input-label for="password_confirmation" value="ยืนยันรหัสผ่าน" />
+                <x-text-input id="password_confirmation" name="password_confirmation" type="password"
+                              autocomplete="new-password" :required="! $employee" class="mt-1 block w-full" />
+                <x-input-error :messages="$errors->get('password_confirmation')" class="mt-1" />
+            </div>
+        </div>
+
+        <p class="mt-3 text-xs text-gray-500">
+            รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร และถูกเก็บแบบ hash ในฐานข้อมูล
+        </p>
+
+        <div class="mt-5 flex items-center gap-3">
+            <x-primary-button>{{ $employee ? 'บันทึกการแก้ไข' : 'เพิ่มพนักงาน' }}</x-primary-button>
+            <a href="{{ route('admin.employees.index') }}" class="text-sm text-gray-600 underline">ยกเลิก</a>
+        </div>
+    </form>
 @endsection

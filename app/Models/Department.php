@@ -2,41 +2,43 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Builder;
+use App\Models\Concerns\HasGeneratedId;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * ตาราง department — ข้อมูลแผนก
+ *
+ * @property string $department_id
+ * @property string $department_name
+ */
 class Department extends Model
 {
-    use HasFactory;
+    /** @use HasFactory<\Database\Factories\DepartmentFactory> */
+    use HasFactory, HasGeneratedId;
+
+    protected $table = 'department';
+
+    protected $primaryKey = 'department_id';
+
+    public $timestamps = false;
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
 
     protected $fillable = [
-        'code',
-        'name',
-        'description',
-        'is_active',
+        'department_name',
     ];
 
-    protected function casts(): array
+    public static function idPrefix(): string
     {
-        return [
-            'is_active' => 'boolean',
-        ];
+        return 'DEP';
     }
 
     public function employees(): HasMany
     {
-        return $this->hasMany(User::class);
-    }
-
-    public function zones(): HasMany
-    {
-        return $this->hasMany(Zone::class);
-    }
-
-    public function scopeActive(Builder $query): Builder
-    {
-        return $query->where('is_active', true);
+        return $this->hasMany(Employee::class, 'department_id', 'department_id');
     }
 }

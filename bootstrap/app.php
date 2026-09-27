@@ -1,12 +1,13 @@
 <?php
 
+use App\Http\Middleware\EnsureActorActive;
+use App\Http\Middleware\EnsureAdministrator;
+use App\Http\Middleware\EnsureAuthenticated;
+use App\Http\Middleware\EnsureEmployee;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
-use App\Http\Middleware\EnsureRole;
-use App\Http\Middleware\EnsureUserIsActive;
-use App\Http\Middleware\RedirectIfMustChangePassword;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -16,9 +17,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'role' => EnsureRole::class,
-            'user.active' => EnsureUserIsActive::class,
-            'must.change' => RedirectIfMustChangePassword::class,
+            'administrator' => EnsureAdministrator::class,
+            'employee' => EnsureEmployee::class,
+            'actor' => EnsureAuthenticated::class,
+            'actor.active' => EnsureActorActive::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -4,15 +4,18 @@ namespace App\Services;
 
 use App\Models\Booking;
 use App\Models\Desk;
-use App\Models\TimeSlot;
 use App\Models\Zone;
+use App\Support\TimeSlot;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
+/**
+ * สรุปสถิติการใช้งานสำหรับ Admin Dashboard และหน้ารายงาน
+ */
 class Analytics
 {
     /**
-     * à¸ªà¸–à¸´à¸•à¸´ "à¸•à¸­à¸™à¸™à¸µà¹‰" à¹à¸šà¸š real-time à¸ªà¸³à¸«à¸£à¸±à¸š Dashboards
+     * สถานะโต๊ะ "ตอนนี้" แบบ real-time สำหรับหน้า Dashboard
      *
      * @return array{using_now:int, available_now:int, total_usable_desks:int, today_bookings:int, today_checked_in:int, today_rate:int, maintenance:int}
      */
@@ -20,22 +23,24 @@ class Analytics
     {
         $today = Carbon::today()->toDateString();
 
-        $usingNow = Booking::where('status', Booking::STATUS_CHECKED_IN)
-            ->where('booking_date', $today)
+        $usingNow = Booking::forDate($today)
+            ->where('booking_status', Booking::STATUS_CHECKED_IN)
             ->count();
 
-        $totalUsable = Desk::where('is_active', true)->where('is_maintenance', false)->count();
-        $maintenance = Desk::where('is_maintenance', true)->count();
+        $totalUsable = Desk::usable()->count();
+        $maintenance = Desk::maintenance()->count();
 
         $todayBookings = Booking::forDate($today)
-            ->whereIn('status', [Booking::STATUS_CONFIRMED, Booking::STATUS_CHECKED_IN, Booking::STATUS_CHECKED_OUT])
+            ->whereIn('booking_status', [
+                Booking::STATUS_RESERVED,
+                Booking::STATUS_CHECKED_IN,
+                Booking::STATUS_COMPLETED,
+            ])
             ->count();
 
         $todayCheckedIn = Booking::forDate($today)
-            ->whereIn('status', [Booking::STATUS_CHECKED_IN, Booking::STATUS_CHECKED_OUT])
+            ->whereIn('booking_status', [Booking::STATUS_CHECKED_IN, Booking::STATUS_COMPLETED])
             ->count();
-
-        $rate = $todayBookings > 0 ? round($todayCheckedIn / $todayBookings * 100) : 0;
 
         return [
             'using_now' => $usingNow,
@@ -43,129 +48,126 @@ class Analytics
             'total_usable_desks' => $totalUsable,
             'today_bookings' => $todayBookings,
             'today_checked_in' => $todayCheckedIn,
-            'today_rate' => $rate,
+            'today_rate' => $todayBookings > 0 ? round($todayCheckedIn / $todayBookings * 100) : 0,
             'maintenance' => $maintenance,
         ];
     }
 
     /**
-     * à¸­à¸±à¸•à¸£à¸²à¸„à¸§à¸²à¸¡à¸«à¸™à¸²à¹à¸™à¹ˆà¸™ (%) à¸£à¸²à¸¢à¹‚à¸‹à¸™ à¸£à¸²à¸¢à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸² à¸ªà¸³à¸«à¸£à¸±à¸šà¸§à¸±à¸™à¸—à¸µà¹ˆà¸à¸³à¸«à¸™à¸”
+     * อัตราการใช้งาน (%) รายโซน รายช่วงเวลา
      *
-     * @return array<int, array{zone_id:int, zone_name:string, zone_code:string|null, total:int, maintenance:int, slots: array<int, array{slot_id:int, slot_name:string, occupied:int, pct:int}>}>
+     * @return array<int, array{zone_id:string, zone_name:string, total:int, maintenance:int, occupied:int, pct:int, slots:array<int, array{time_slot:string, occupied:int, pct:int}>}>
      */
     public function zoneOccupancy(string $date): array
     {
-        $slots = TimeSlot::active()->ordered()->get();
-        $zones = Zone::with('desks')->active()->orderBy('sort_order')->get();
+        $zones = Zone::with('desks')->orderBy('zone_name')->get();
 
-        $activeBookings = Booking::active()
+        $bookings = Booking::active()
             ->forDate($date)
-            ->get(['desk_id', 'time_slot_id'])
-            ->groupBy('time_slot_id')
-            ->map(fn ($g) => $g->pluck('desk_id')->all());
+            ->get(['desk_id', 'time_slot'])
+            ->groupBy('time_slot')
+            ->map(fn ($group) => $group->pluck('desk_id')->all());
 
-        return $zones->map(function (Zone $zone) use ($slots, $activeBookings) {
+        $slots = TimeSlot::all();
+
+        return $zones->map(function (Zone $zone) use ($slots, $bookings) {
             $desks = $zone->desks;
-            $usable = $desks->where('is_active', true)->where('is_maintenance', false);
-            $total = $usable->count();
-            $maintenance = $desks->where('is_maintenance', true)->count();
+            $usable = $desks->reject(fn (Desk $desk) => $desk->isMaintenance());
+            $usableIds = $usable->pluck('desk_id')->all();
 
-            $slotRows = $slots->map(fn (TimeSlot $slot) => [
-                'slot_id' => $slot->id,
-                'slot_name' => $slot->name,
-                'occupied' => $total > 0 ? count(array_intersect($usable->pluck('id')->all(), $activeBookings[$slot->id] ?? [])) : 0,
-                'pct' => 0,
-            ])->map(function ($row) use ($total) {
-                $row['pct'] = $total > 0 ? round($row['occupied'] / $total * 100) : 0;
+            $slotRows = array_map(function (TimeSlot $slot) use ($bookings, $usableIds) {
+                $taken = $bookings->get($slot->name, []);
+                $occupied = count(array_intersect($usableIds, $taken));
 
-                return $row;
-            })->all();
+                return [
+                    'time_slot' => $slot->name,
+                    'occupied' => $occupied,
+                    'pct' => $usableIds !== [] ? round($occupied / count($usableIds) * 100) : 0,
+                ];
+            }, $slots);
+
+            $occupied = max(array_map(fn ($row) => $row['occupied'], $slotRows) ?: [0]);
 
             return [
-                'zone_id' => $zone->id,
-                'zone_name' => $zone->name,
-                'zone_code' => $zone->code,
-                'total' => $total,
-                'maintenance' => $maintenance,
+                'zone_id' => $zone->zone_id,
+                'zone_name' => $zone->zone_name,
+                'total' => count($usableIds),
+                'maintenance' => $desks->filter(fn (Desk $desk) => $desk->isMaintenance())->count(),
+                'occupied' => $occupied,
+                'pct' => $usableIds !== [] ? round($occupied / count($usableIds) * 100) : 0,
                 'slots' => $slotRows,
             ];
         })->values()->all();
     }
 
     /**
-     * à¸ªà¸–à¸´à¸•à¸´à¸£à¸²à¸¢à¸§à¸±à¸™à¹ƒà¸™à¸Šà¹ˆà¸§à¸‡à¸§à¸±à¸™à¸—à¸µà¹ˆ (à¸—à¸¸à¸à¸§à¸±à¸™ à¸¡à¸µ row à¹à¸¡à¹‰à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸¡à¸¹à¸¥)
+     * สถิติรายวัน (เติมวันที่ไม่มีข้อมูลด้วย 0)
      *
-     * @return Collection<int, array{date:string, bookings:int, confirmed:int, checked_in:int, checked_out:int, cancelled:int, expired:int, arrived:int, no_show:int, rate:int}>
+     * @return Collection<int, array{date:string, label:string, reserved:int, checked_in:int, completed:int, expired:int, bookings:int, arrived:int, no_show:int, rate:int}>
      */
     public function dailyStats(string $from, string $to): Collection
     {
         $rows = Booking::query()
-            ->where('booking_date', '>=', $from)
-            ->where('booking_date', '<=', $to)
+            ->whereDate('booking_date', '>=', $from)
+            ->whereDate('booking_date', '<=', $to)
             ->selectRaw('booking_date')
             ->selectRaw('count(*) as total')
-            ->selectRaw("sum(case when status = 'confirmed' then 1 else 0 end) as confirmed")
-            ->selectRaw("sum(case when status = 'checked_in' then 1 else 0 end) as checked_in")
-            ->selectRaw("sum(case when status = 'checked_out' then 1 else 0 end) as checked_out")
-            ->selectRaw("sum(case when status = 'cancelled' then 1 else 0 end) as cancelled")
-            ->selectRaw("sum(case when status = 'expired' then 1 else 0 end) as expired")
+            ->selectRaw('sum(case when booking_status = ? then 1 else 0 end) as reserved', [Booking::STATUS_RESERVED])
+            ->selectRaw('sum(case when booking_status = ? then 1 else 0 end) as checked_in', [Booking::STATUS_CHECKED_IN])
+            ->selectRaw('sum(case when booking_status = ? then 1 else 0 end) as completed', [Booking::STATUS_COMPLETED])
+            ->selectRaw('sum(case when booking_status = ? then 1 else 0 end) as expired', [Booking::STATUS_EXPIRED])
             ->groupBy('booking_date')
             ->get()
             ->keyBy(fn ($row) => Carbon::parse($row->booking_date)->toDateString());
 
-        $days = $rows->keys();
-
         $days = collect();
         $cursor = Carbon::parse($from)->startOfDay();
-        $lastDay = Carbon::parse($to)->startOfDay();
+        $last = Carbon::parse($to)->startOfDay();
 
-        for (; $cursor->lte($lastDay); $cursor->addDay()) {
+        for (; $cursor->lte($last); $cursor->addDay()) {
             $days->push($cursor->copy());
         }
 
         return $days->map(function (Carbon $day) use ($rows) {
             $key = $day->toDateString();
-            $r = $rows[$key] ?? null;
+            $row = $rows->get($key);
 
-            $bookings = (int) ($r->total ?? 0);
-            $arrived = (int) ($r->checked_in ?? 0) + (int) ($r->checked_out ?? 0);
+            $bookings = (int) ($row->total ?? 0);
+            $arrived = (int) ($row->checked_in ?? 0) + (int) ($row->completed ?? 0);
 
             return [
                 'date' => $key,
                 'label' => $day->format('d/m'),
+                'reserved' => (int) ($row->reserved ?? 0),
+                'checked_in' => (int) ($row->checked_in ?? 0),
+                'completed' => (int) ($row->completed ?? 0),
+                'expired' => (int) ($row->expired ?? 0),
                 'bookings' => $bookings,
-                'confirmed' => (int) ($r->confirmed ?? 0),
-                'checked_in' => (int) ($r->checked_in ?? 0),
-                'checked_out' => (int) ($r->checked_out ?? 0),
-                'cancelled' => (int) ($r->cancelled ?? 0),
-                'expired' => (int) ($r->expired ?? 0),
                 'arrived' => $arrived,
-                'no_show' => $bookings > 0 ? (int) ($r->expired ?? 0) : 0,
+                'no_show' => (int) ($row->expired ?? 0),
                 'rate' => $bookings > 0 ? round($arrived / $bookings * 100) : 0,
             ];
         })->values();
     }
 
     /**
-     * à¸ªà¸–à¸´à¸•à¸´à¸£à¸²à¸¢à¹€à¸”à¸·à¸­à¸™ (à¸£à¸§à¸¡à¸ˆà¸²à¸à¸£à¸²à¸¢à¸§à¸±à¸™)
+     * สถิติรายเดือน (รวมจากสถิติรายวัน)
      *
-     * @return Collection<int, array{month:string, label:string, bookings:int, arrived:int, cancelled:int, expired:int, rate:int}>
+     * @return Collection<int, array{month:string, label:string, bookings:int, arrived:int, expired:int, rate:int}>
      */
     public function monthlyStats(string $from, string $to): Collection
     {
         return $this->dailyStats($from, $to)
-            ->groupBy(fn ($row) => substr($row['date'], 0, 7))
+            ->groupBy(fn (array $row) => substr($row['date'], 0, 7))
             ->map(function (Collection $rows, string $month) {
-                $label = Carbon::parse($month.'-01')->format('M Y');
                 $bookings = $rows->sum('bookings');
                 $arrived = $rows->sum('arrived');
 
                 return [
                     'month' => $month,
-                    'label' => $label,
+                    'label' => Carbon::parse($month.'-01')->format('M Y'),
                     'bookings' => $bookings,
                     'arrived' => $arrived,
-                    'cancelled' => $rows->sum('cancelled'),
                     'expired' => $rows->sum('expired'),
                     'rate' => $bookings > 0 ? round($arrived / $bookings * 100) : 0,
                 ];
@@ -174,31 +176,31 @@ class Analytics
     }
 
     /**
-     * à¸à¸´à¸ˆà¸à¸£à¸£à¸¡à¸¥à¹ˆà¸²à¸ªà¸¸à¸” (booking/check-in/checkout) à¸ªà¸³à¸«à¸£à¸±à¸š feed à¸šà¸™ dashboard
+     * กิจกรรมล่าสุด (booking / check-in / check-out) สำหรับ feed บนหน้า Dashboard
      *
-     * @return Collection<int, array{booking_id:int, employee:string, department:string|null, zone:string, desk:string, date:string, slot:string, status:string, action_at:?\Carbon\CarbonInterface, cancel_reason:string|null}>
+     * @return Collection<int, array<string, mixed>>
      */
     public function recentActivity(int $limit = 10): Collection
     {
         return Booking::query()
-            ->with(['user.department', 'desk.zone', 'timeSlot'])
-            ->orderByDesc('updated_at')
+            ->with(['employee.department', 'desk.zone'])
+            ->orderByDesc('booking_date')
+            ->orderByDesc('start_time')
+            ->orderByDesc('booking_id')
             ->limit($limit)
             ->get()
-            ->map(function (Booking $b) {
-                $actionAt = $b->checked_in_at ?? $b->checked_out_at ?? $b->updated_at;
-
+            ->map(function (Booking $booking) {
                 return [
-                    'booking_id' => $b->id,
-                    'employee' => $b->user->name,
-                    'department' => $b->user->department?->name,
-                    'zone' => $b->desk->zone->name,
-                    'desk' => $b->desk->code,
-                    'date' => $b->bookingDate->format('d/m/Y'),
-                    'slot' => $b->timeSlot->name,
-                    'status' => $b->status,
-                    'action_at' => $actionAt,
-                    'cancel_reason' => $b->cancel_reason,
+                    'booking_id' => $booking->booking_id,
+                    'employee' => $booking->employee->employee_fullname,
+                    'department' => $booking->employee->department?->department_name,
+                    'zone' => $booking->desk->zone->zone_name,
+                    'desk' => $booking->desk->desk_number,
+                    'date' => $booking->booking_date->format('d/m/Y'),
+                    'time_slot' => $booking->time_slot,
+                    'status' => $booking->booking_status,
+                    'status_label' => $booking->statusLabel(),
+                    'action_at' => $booking->actual_checkout_time ?? $booking->actual_checkin_time,
                 ];
             });
     }

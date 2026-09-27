@@ -5,13 +5,11 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Department;
-use App\Models\Desk;
-use App\Models\TimeSlot;
-use App\Models\User;
 use App\Models\Zone;
 use App\Services\Analytics;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -19,130 +17,171 @@ class ReportController extends Controller
 {
     public function index(Request $request, Analytics $analytics): View
     {
-        $from = $request->query('from')
-            ? Carbon::parse($request->query('from'))->toDateString()
-            : Carbon::today()->subDays(29)->toDateString();
-        $to = $request->query('to')
-            ? Carbon::parse($request->query('to'))->toDateString()
-            : Carbon::today()->toDateString();
+        $filters = $this->validated($request);
 
-        $daily = $analytics->dailyStats($from, $to);
-        $monthly = $analytics->monthlyStats($from, $to);
+        $date = Carbon::parse($filters['date_from']);
+        $to = Carbon::parse($filters['date_to']);
+        $dateFrom = $date->copy()->startOfMonth();
+        $dateTo = $to->copy()->endOfMonth();
 
-        $bookings = $this->bookingQuery($request)
-            ->paginate(20)
-            ->withQueryString();
-
-        $totals = [
-            'bookings' => $daily->sum('bookings'),
-            'arrived' => $daily->sum('arrived'),
-            'cancelled' => $daily->sum('cancelled'),
-            'expired' => $daily->sum('expired'),
-            'rate' => $daily->sum('bookings') > 0
-                ? round($daily->sum('arrived') / $daily->sum('bookings') * 100)
-                : 0,
-        ];
+        $summary = $this->summary($filters);
 
         return view('admin.reports.index', [
-            'daily' => $daily,
-            'monthly' => $monthly,
-            'totals' => $totals,
-            'bookings' => $bookings,
-            'zoneOccupancy' => $analytics->zoneOccupancy($to),
-            'departments' => Department::active()->orderBy('name')->get(),
-            'zones' => Zone::active()->orderBy('sort_order')->get(),
-            'statuses' => $this->statusOptions(),
-            'from' => $from,
+            'filters' => $filters,
+            'date' => $date,
             'to' => $to,
-            'f' => $request->query(),
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+            'summary' => $summary,
+            'daily' => $analytics->dailyStats($dateFrom->toDateString(), $dateTo->toDateString()),
+            'monthly' => $analytics->monthlyStats($dateFrom->toDateString(), $dateTo->toDateString()),
+            'zoneOccupancy' => $analytics->zoneOccupancy($date->toDateString()),
+            'zones' => Zone::orderBy('zone_name')->get(),
+            'departments' => Department::orderBy('department_name')->get(),
+            'statuses' => Booking::statusOptions(),
+            'slots' => \App\Support\TimeSlot::all(),
         ]);
     }
 
     public function export(Request $request, Analytics $analytics): StreamedResponse
     {
-        $from = $request->query('from') ? Carbon::parse($request->query('from'))->toDateString() : '2000-01-01';
-        $to = $request->query('to') ? Carbon::parse($request->query('to'))->toDateString() : Carbon::today()->toDateString();
+        $filters = $this->validated($request);
 
-        $rows = $this->bookingQuery($request->merge(['from' => $from, 'to' => $to]))->get();
+        $date = Carbon::parse($filters['date_from']);
+        $to = Carbon::parse($filters['date_to']);
 
-        $filename = 'bookings-report-'.$from.'_to_'.$to.'.csv';
+        return response()->streamDownload(function () use ($filters, $date, $to) {
+            $handle = fopen('php://output', 'w');
+            fwrite($handle, "\xEF\xBB\xBF");
 
-        $headers = [
+            fputcsv($handle, [
+                'วันที่จอง', 'ช่วงเวลา', 'เวลาเริ่ม', 'เวลาสิ้นสุด',
+                'ชื่อพนักงาน', 'แผนก', 'อีเมล', 'โทรศัพท์', 'บทบาท',
+                'โซน', 'โต๊ะ', 'สถานะ', 'เวลาเช็คอิน', 'เวลาเช็คเอาต์', 'มีรูปเช็คอิน',
+            ]);
+
+            $this->rows($filters)->chunk(500)->each(function ($rows) use ($handle) {
+                foreach ($rows as $row) {
+                    fputcsv($handle, [
+                        $row['booking_date'],
+                        $row['time_slot'],
+                        $row['start_time'],
+                        $row['end_time'],
+                        $row['employee_fullname'],
+                        $row['department_name'],
+                        $row['employee_email'],
+                        $row['employee_tel'],
+                        $row['employee_role'],
+                        $row['zone_name'],
+                        $row['desk_number'],
+                        $row['booking_status'],
+                        $row['actual_checkin_time'],
+                        $row['actual_checkout_time'],
+                        $row['checkin_photo'] ? 'มี' : 'ไม่มี',
+                    ]);
+                }
+            });
+
+            fclose($handle);
+        }, 'report-bookings-'.Carbon::today()->format('Ymd-His').'.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
-            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
-        ];
-
-        $callback = function () use ($rows, $from, $to, $analytics) {
-            $out = fopen('php://output', 'w');
-
-            fwrite($out, "\xEF\xBB\xBF"); // BOM for Excel (Thai)
-
-            fputcsv($out, ['à¸£à¸«à¸±à¸ªà¸žà¸™à¸±à¸à¸‡à¸²à¸™', 'à¸Šà¸·à¹ˆà¸­-à¸™à¸²à¸¡à¸ªà¸à¸¸à¸¥', 'à¹à¸œà¸™à¸', 'à¹‚à¸‹à¸™à¸žà¸·à¹‰à¸™à¸—à¸µà¹ˆ', 'à¹‚à¸•à¹Šà¸°', 'à¸§à¸±à¸™à¸—à¸µà¹ˆà¸ˆà¸­à¸‡', 'à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸²', 'à¹€à¸£à¸´à¹ˆà¸¡-à¸ªà¸´à¹‰à¸™à¸ªà¸¸à¸”', 'à¸ªà¸–à¸²à¸™à¸°', 'à¹€à¸§à¸¥à¸²à¹€à¸Šà¹‡à¸„à¸­à¸´à¸™', 'à¹€à¸§à¸¥à¸²à¹€à¸Šà¹‡à¸„à¹€à¸­à¸²à¸•à¹Œ', 'à¸ªà¸²à¹€à¸«à¸•à¸¸à¸¢à¸à¹€à¸¥à¸´à¸']);
-
-            foreach ($rows as $b) {
-                fputcsv($out, [
-                    $b->user->employee_code ?? '',
-                    $b->user->name,
-                    $b->user->department?->name ?? '',
-                    $b->desk->zone->name ?? '',
-                    $b->desk->code,
-                    $b->bookingDate->format('d/m/Y'),
-                    $b->timeSlot->name ?? '',
-                    $b->starts_at->format('H:i').' - '.$b->ends_at->format('H:i'),
-                    $this->statusLabel($b->status),
-                    $b->checked_in_at?->format('d/m/Y H:i'),
-                    $b->checked_out_at?->format('d/m/Y H:i'),
-                    match ($b->cancel_reason) {
-                        Booking::CANCEL_BY_USER => 'à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¸¢à¸à¹€à¸¥à¸´à¸',
-                        Booking::CANCEL_AUTO_LATE => 'à¹€à¸¥à¸¢à¹€à¸§à¸¥à¸²à¹€à¸Šà¹‡à¸„à¸­à¸´à¸™',
-                        default => '',
-                    },
-                ]);
-            }
-
-            fclose($out);
-        };
-
-        return new StreamedResponse($callback, 200, $headers);
+        ]);
     }
 
-    private function bookingQuery(Request $request)
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<Booking>
+     */
+    private function query(array $filters)
     {
         return Booking::query()
-            ->with(['user.department', 'desk.zone', 'timeSlot'])
-            ->when($request->query('from'), fn ($q, $from) => $q->where('booking_date', '>=', $from))
-            ->when($request->query('to'), fn ($q, $to) => $q->where('booking_date', '<=', $to))
-            ->when($request->query('status') && $request->query('status') !== '', fn ($q, $status) => $q->where('status', $status))
-            ->when($request->query('slot'), fn ($q, $slot) => $q->where('time_slot_id', (int) $slot))
-            ->when($request->query('zone'), function ($q, $zone) {
-                $q->whereIn('desk_id', Desk::where('zone_id', (int) $zone)->pluck('id'));
+            ->with(['employee.department', 'desk.zone'])
+            ->whereDate('booking_date', '>=', Carbon::parse($filters['date_from'])->toDateString())
+            ->whereDate('booking_date', '<=', Carbon::parse($filters['date_to'])->toDateString())
+            ->when($filters['status'], fn ($q, $status) => $q->where('booking_status', $status))
+            ->when($filters['time_slot'], fn ($q, $slot) => $q->where('time_slot', $slot))
+            ->when($filters['zone_id'], fn ($q, $zone) => $q->whereHas('desk', fn ($d) => $d->where('zone_id', $zone)))
+            ->when($filters['department_id'], fn ($q, $dept) => $q->whereHas(
+                'employee',
+                fn ($e) => $e->where('department_id', $dept)
+            ))
+            ->when($filters['search'], function ($q, $search) {
+                $q->where(function ($inner) use ($search) {
+                    $inner->whereHas('employee', fn ($e) => $e->where('employee_fullname', 'like', "%{$search}%"))
+                        ->orWhereHas('employee', fn ($e) => $e->where('employee_email', 'like', "%{$search}%"))
+                        ->orWhereHas('desk', fn ($d) => $d->where('desk_number', 'like', "%{$search}%"));
+                });
             })
-            ->when($request->query('department'), function ($q, $department) {
-                $q->whereIn('user_id', User::where('department_id', (int) $department)->pluck('id'));
-            })
-            ->when($request->query('search'), function ($q, $search) {
-                $q->whereIn('user_id', User::whereRaw('lower(name) like ?', ['%'.mb_strtolower($search).'%'])
-                    ->orWhereRaw('lower(employee_code) like ?', ['%'.mb_strtolower($search).'%'])
-                    ->orWhereRaw('lower(email) like ?', ['%'.mb_strtolower($search).'%'])
-                    ->pluck('id'));
-            })
-            ->orderByDesc('booking_date')
-            ->orderByDesc('id');
+            ->orderBy('booking_date')
+            ->orderBy('start_time')
+            ->orderBy('booking_id');
     }
 
-    private function statusOptions(): array
+    private function rows(array $filters)
     {
+        return $this->query($filters)->get()->map(fn (Booking $booking) => [
+            'booking_id' => $booking->booking_id,
+            'booking_date' => $booking->booking_date->format('d/m/Y'),
+            'time_slot' => $booking->time_slot,
+            'start_time' => $booking->start_time->format('H:i'),
+            'end_time' => $booking->end_time->format('H:i'),
+            'employee_fullname' => $booking->employee->employee_fullname,
+            'employee_email' => $booking->employee->employee_email,
+            'employee_tel' => $booking->employee->employee_tel,
+            'employee_role' => $booking->employee->roleLabel(),
+            'department_name' => $booking->employee->department?->department_name ?? '-',
+            'zone_name' => $booking->desk->zone->zone_name,
+            'desk_number' => $booking->desk->desk_number,
+            'booking_status' => $booking->statusLabel(),
+            'actual_checkin_time' => $booking->actual_checkin_time?->format('d/m/Y H:i'),
+            'actual_checkout_time' => $booking->actual_checkout_time?->format('d/m/Y H:i'),
+            'checkin_photo' => $booking->checkin_photo,
+        ]);
+    }
+
+    /**
+     * @return array{total:int, reserved:int, checked_in:int, completed:int, expired:int, rate:int}
+     */
+    private function summary(array $filters): array
+    {
+        $rows = $this->query($filters)
+            ->get(['booking_status'])
+            ->groupBy('booking_status');
+
+        $count = fn (string $status) => $rows->get($status, collect())->count();
+        $total = $rows->sum(fn ($group) => $group->count());
+        $arrived = $count(Booking::STATUS_CHECKED_IN) + $count(Booking::STATUS_COMPLETED);
+
         return [
-            Booking::STATUS_CONFIRMED => 'à¸£à¸­à¹€à¸Šà¹‡à¸„à¸­à¸´à¸™',
-            Booking::STATUS_CHECKED_IN => 'à¸à¸³à¸¥à¸±à¸‡à¹ƒà¸Šà¹‰à¸‡à¸²à¸™',
-            Booking::STATUS_CHECKED_OUT => 'à¹€à¸Šà¹‡à¸„à¹€à¸­à¸²à¸•à¹Œà¹à¸¥à¹‰à¸§',
-            Booking::STATUS_CANCELLED => 'à¸¢à¸à¹€à¸¥à¸´à¸à¹à¸¥à¹‰à¸§',
-            Booking::STATUS_EXPIRED => 'à¸«à¸¡à¸”à¸­à¸²à¸¢à¸¸ (à¸ªà¸²à¸¢)',
+            'total' => $total,
+            'reserved' => $count(Booking::STATUS_RESERVED),
+            'checked_in' => $count(Booking::STATUS_CHECKED_IN),
+            'completed' => $count(Booking::STATUS_COMPLETED),
+            'expired' => $count(Booking::STATUS_EXPIRED),
+            'rate' => $total > 0 ? round($arrived / $total * 100) : 0,
         ];
     }
 
-    private function statusLabel(string $status): string
+    private function validated(Request $request): array
     {
-        return $this->statusOptions()[$status] ?? $status;
+        $data = $request->validate([
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
+            'status' => ['nullable', Rule::in(array_keys(Booking::statusOptions()))],
+            'time_slot' => ['nullable', 'string', Rule::in(\App\Support\TimeSlot::names())],
+            'zone_id' => ['nullable', 'string', Rule::exists('zone', 'zone_id')],
+            'department_id' => ['nullable', 'string', Rule::exists('department', 'department_id')],
+            'search' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $data['date_from'] = $data['date_from'] ?? Carbon::today()->subDays(29)->toDateString();
+        $data['date_to'] = $data['date_to'] ?? Carbon::today()->toDateString();
+
+        foreach (['status', 'time_slot', 'zone_id', 'department_id'] as $key) {
+            $data[$key] = ($data[$key] ?? null) ?: null;
+        }
+
+        $data['search'] = trim((string) ($data['search'] ?? ''));
+
+        return $data;
     }
 }

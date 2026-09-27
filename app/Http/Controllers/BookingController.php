@@ -4,97 +4,90 @@ namespace App\Http\Controllers;
 
 use App\Models\Booking;
 use App\Models\Desk;
-use App\Models\TimeSlot;
+use App\Services\CurrentActor;
+use App\Support\TimeSlot;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class BookingController extends Controller
 {
-    public function mine(): View
+    public function mine(CurrentActor $current): View
     {
         return view('bookings.mine', [
-            'bookings' => Booking::with(['desk.zone', 'timeSlot'])
-                ->where('user_id', auth()->id())
+            'bookings' => Booking::with(['desk.zone', 'employee.department'])
+                ->where('employee_id', $current->employee()->employee_id)
                 ->orderByDesc('booking_date')
-                ->orderBy('starts_at')
+                ->orderByDesc('start_time')
                 ->paginate(15),
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    /**
+     * กฎการจอง
+     *   - โต๊ะ 1 ตัว จองได้ 1 คน/ช่วงเวลา
+     *   - พนักงาน 1 คน จองซ้ำในวัน-ช่วงเวลาเดียวกันไม่ได้
+     */
+    public function store(Request $request, CurrentActor $current): RedirectResponse
     {
         $data = $request->validate([
-            'desk_id' => ['required', 'integer'],
-            'booking_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:today', 'before_or_equal:'.Carbon::today()->addDays(config('booking.lead_days', 14))->format('Y-m-d')],
-            'time_slot_id' => ['required', 'integer'],
+            'desk_id' => ['required', 'string', Rule::exists('desk', 'desk_id')],
+            'booking_date' => [
+                'required',
+                'date_format:Y-m-d',
+                'after_or_equal:today',
+                'before_or_equal:'.Carbon::today()->addDays((int) config('booking.lead_days', 14))->toDateString(),
+            ],
+            'time_slot' => ['required', 'string', Rule::in(TimeSlot::names())],
         ]);
 
-        $user = $request->user();
+        $employee = $current->employee();
+        $slot = TimeSlot::find($data['time_slot']);
         $error = null;
         $booking = null;
 
-        DB::transaction(function () use (&$booking, &$error, $data, $user) {
+        DB::transaction(function () use (&$booking, &$error, $data, $employee, $slot) {
             $desk = Desk::whereKey($data['desk_id'])->lockForUpdate()->first();
 
-            if (! $desk) {
-                $error = 'ไม่พบโต๊ะที่เลือก';
+            if ($desk->isMaintenance()) {
+                $error = 'โต๊ะนี้อยู่ระหว่างปิดซ่อมบำรุง ไม่สามารถจองได้';
 
                 return;
             }
 
-            if ($desk->isOutOfService()) {
-                $error = 'โต๊ะนี้ถูกปิดใช้งานหรืออยู่ระหว่างซ่อมบำรุง';
+            $taken = Booking::active()
+                ->forDate($data['booking_date'])
+                ->forSlot($slot->name)
+                ->where(function ($query) use ($desk, $employee) {
+                    $query->where('desk_id', $desk->desk_id)
+                        ->orWhere('employee_id', $employee->employee_id);
+                })
+                ->first();
 
-                return;
-            }
-
-            $slot = TimeSlot::whereKey($data['time_slot_id'])->first();
-
-            if (! $slot || ! $slot->is_active) {
-                $error = 'ไม่พบช่วงเวลาที่เลือก';
-
-                return;
-            }
-
-            $startsAt = SeatMapController::slotDateTime($data['booking_date'], $slot->start_time);
-            $endsAt = SeatMapController::slotDateTime($data['booking_date'], $slot->end_time);
-
-            $deskTaken = Booking::active()
-                ->where('desk_id', $desk->id)
-                ->where('booking_date', $data['booking_date'])
-                ->where('time_slot_id', $slot->id)
-                ->exists();
-
-            if ($deskTaken) {
+            if ($taken?->desk_id === $desk->desk_id) {
                 $error = 'โต๊ะนี้ถูกจองในช่วงเวลานี้แล้ว';
 
                 return;
             }
 
-            $userTaken = Booking::active()
-                ->where('user_id', $user->id)
-                ->where('booking_date', $data['booking_date'])
-                ->where('time_slot_id', $slot->id)
-                ->exists();
-
-            if ($userTaken) {
-                $error = 'คุณมีการจองซ้อนอยู่ในช่วงเวลาเดียวกันแล้ว (1 คนจองได้ครั้งละ 1 โต๊ะต่อช่วงเวลา)';
+            if ($taken !== null) {
+                $error = 'คุณมีการจองซ้อนอยู่ในช่วงเวลาเดียวกันแล้ว (1 คนจองได้ครั้งละ 1 โต๊ะ)';
 
                 return;
             }
 
             $booking = Booking::create([
-                'user_id' => $user->id,
-                'desk_id' => $desk->id,
-                'time_slot_id' => $slot->id,
+                'employee_id' => $employee->employee_id,
+                'desk_id' => $desk->desk_id,
                 'booking_date' => $data['booking_date'],
-                'starts_at' => $startsAt,
-                'ends_at' => $endsAt,
-                'status' => Booking::STATUS_CONFIRMED,
+                'time_slot' => $slot->name,
+                'start_time' => $slot->start,
+                'end_time' => $slot->end,
+                'booking_status' => Booking::STATUS_RESERVED,
             ]);
         });
 
@@ -102,21 +95,18 @@ class BookingController extends Controller
             throw ValidationException::withMessages(['desk_id' => $error]);
         }
 
-        return back()->with('success', "จองโต๊ะ {$booking->desk->code} เรียบร้อยแล้ว");
+        return back()->with('success', "จองโต๊ะ {$booking->desk->desk_number} ช่วง {$booking->time_slot} เรียบร้อยแล้ว");
     }
 
-    public function destroy(Request $request, Booking $booking): RedirectResponse
+    public function destroy(Request $request, Booking $booking, CurrentActor $current): RedirectResponse
     {
-        abort_unless($booking->user_id === $request->user()->id, 403, 'ไม่ใช่การจองของคุณ');
+        abort_unless($booking->employee_id === $current->employee()?->employee_id, 403, 'ไม่ใช่การจองของคุณ');
 
         if (! $booking->isCancelable()) {
-            return back()->with('error', 'ไม่สามารถยกเลิกได้ เนื่องจากไม่ใช่สถานะรอเช็คอิน');
+            return back()->with('error', 'ไม่สามารถยกเลิกได้ เนื่องจากเช็คอินแล้วหรือใบจองถูกปิดใช้งาน');
         }
 
-        $booking->update([
-            'status' => Booking::STATUS_CANCELLED,
-            'cancel_reason' => Booking::CANCEL_BY_USER,
-        ]);
+        $booking->forceFill(['booking_status' => Booking::STATUS_EXPIRED])->save();
 
         return back()->with('success', 'ยกเลิกการจองเรียบร้อยแล้ว');
     }

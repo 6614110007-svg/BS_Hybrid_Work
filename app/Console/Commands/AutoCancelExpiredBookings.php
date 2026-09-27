@@ -3,52 +3,44 @@
 namespace App\Console\Commands;
 
 use App\Models\Booking;
-use App\Notifications\BookingAutoCancelled;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 class AutoCancelExpiredBookings extends Command
 {
     protected $signature = 'bookings:auto-cancel';
 
-    protected $description = 'ยกเลิกใบจองที่เลยเวลาเช็คอินเกินกำหนด และปิดการใช้งานโต๊ะค้างค้าง';
+    protected $description = 'ยกเลิกใบจองที่เลยเวลาเช็คอินเกินกำหนด (ไม่มี actual_checkin_time) และคืนสถานะโต๊ะ';
 
     public function handle(): int
     {
         $now = Carbon::now();
         $grace = (int) config('booking.late_grace_minutes', 60);
-        $autoOut = (int) config('booking.auto_checkout_minutes', 60);
+        $today = $now->toDateString();
+        $cutoff = $now->copy()->subMinutes($grace)->format('H:i:s');
 
-        // 1) confirmed แต่เลยเวลาเช็คอิน (starts_at + grace)
-        $lateConfirmed = Booking::where('status', Booking::STATUS_CONFIRMED)
-            ->whereNotNull('starts_at')
-            ->where('starts_at', '<', $now->copy()->subMinutes($grace))
-            ->get();
+        $cancelled = 0;
 
-        // 2) checked_in แต่ค้างจนเกินเวลาสิ้นสุด (ends_at + autoOut) -> auto check-out
-        $staleCheckedIn = Booking::where('status', Booking::STATUS_CHECKED_IN)
-            ->where('ends_at', '<', $now->copy()->subMinutes($autoOut))
-            ->get();
+        Booking::query()
+            ->where('booking_status', Booking::STATUS_RESERVED)
+            ->whereNull('actual_checkin_time')
+            ->where(function ($query) use ($today, $cutoff) {
+                $query->whereDate('booking_date', '<', $today)
+                    ->orWhere(function ($inner) use ($today, $cutoff) {
+                        $inner->whereDate('booking_date', $today)
+                            ->whereRaw('start_time <= ?', [$cutoff]);
+                    });
+            })
+            ->with('desk')
+            ->chunkById(200, function ($bookings) use (&$cancelled) {
+                foreach ($bookings as $booking) {
+                    $booking->forceFill(['booking_status' => Booking::STATUS_EXPIRED])->save();
 
-        DB::transaction(function () use ($lateConfirmed, $staleCheckedIn) {
-            foreach ($lateConfirmed as $booking) {
-                $booking->update([
-                    'status' => Booking::STATUS_EXPIRED,
-                    'cancel_reason' => Booking::CANCEL_AUTO_LATE,
-                ]);
-                $booking->user->notify(new BookingAutoCancelled($booking));
-            }
+                    $cancelled++;
+                }
+            });
 
-            foreach ($staleCheckedIn as $booking) {
-                $booking->update([
-                    'status' => Booking::STATUS_CHECKED_OUT,
-                    'checked_out_at' => $booking->ends_at,
-                ]);
-            }
-        });
-
-        $this->info("ยกเลิกใบจองที่เลยกำหนด {$lateConfirmed->count()} รายการ, auto-checkout {$staleCheckedIn->count()} รายการ");
+        $this->info('ยกเลิกใบจองที่เลยกำหนด '.$cancelled.' รายการ');
 
         return self::SUCCESS;
     }

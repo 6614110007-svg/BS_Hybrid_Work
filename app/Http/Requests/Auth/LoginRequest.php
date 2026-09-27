@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Models\Actor;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -10,19 +11,27 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * ตรวจสอบข้อมูลเข้าสู่ระบบ โดยลอง ตาราง admin ก่อน แล้วจึง ตาราง employee
+ */
 class LoginRequest extends FormRequest
 {
     /**
-     * Determine if the user is authorized to make this request.
+     * guard => คอลัมน์อีเมลที่ใช้ค้นหา
+     *
+     * @var array<string, string>
      */
+    private const LOOKUP = [
+        'admin' => 'admin_email',
+        'web' => 'employee_email',
+    ];
+
     public function authorize(): bool
     {
         return true;
     }
 
     /**
-     * Get the validation rules that apply to the request.
-     *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
@@ -34,36 +43,46 @@ class LoginRequest extends FormRequest
     }
 
     /**
-     * Attempt to authenticate the request's credentials.
+     * ล็อกอินแล้วคืนผู้ใช้ที่ authenticate สำเร็จ
      *
      * @throws ValidationException
      */
-    public function authenticate(): void
+    public function authenticate(): Actor
     {
         $this->ensureIsNotRateLimited();
 
-        if (! Auth::attempt($this->only('email', 'password'), $this->boolean('remember'))) {
-            RateLimiter::hit($this->throttleKey());
+        $email = $this->string('email')->toString();
+        $password = $this->string('password')->toString();
 
-            throw ValidationException::withMessages([
-                'email' => trans('auth.failed'),
-            ]);
+        foreach (self::LOOKUP as $guard => $column) {
+            if (! Auth::guard($guard)->attempt([$column => $email, 'password' => $password])) {
+                continue;
+            }
+
+            /** @var Actor $actor */
+            $actor = Auth::guard($guard)->user();
+
+            if (! $actor->isActive()) {
+                Auth::guard($guard)->logout();
+
+                throw ValidationException::withMessages([
+                    'email' => 'บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ',
+                ]);
+            }
+
+            RateLimiter::clear($this->throttleKey());
+
+            return $actor;
         }
 
-        RateLimiter::clear($this->throttleKey());
+        RateLimiter::hit($this->throttleKey());
 
-        if (! Auth::user()->isActive()) {
-            Auth::logout();
-
-            throw ValidationException::withMessages([
-                'email' => 'บัญชีผู้ใช้นี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ',
-            ]);
-        }
+        throw ValidationException::withMessages([
+            'email' => trans('auth.failed'),
+        ]);
     }
 
     /**
-     * Ensure the login request is not rate limited.
-     *
      * @throws ValidationException
      */
     public function ensureIsNotRateLimited(): void
@@ -84,9 +103,6 @@ class LoginRequest extends FormRequest
         ]);
     }
 
-    /**
-     * Get the rate limiting throttle key for the request.
-     */
     public function throttleKey(): string
     {
         return Str::transliterate(Str::lower($this->string('email')).'|'.$this->ip());

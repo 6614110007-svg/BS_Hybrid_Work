@@ -3,27 +3,37 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Services\CurrentActor;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\View\View;
 
+/**
+ * เปลี่ยนรหัสผ่านของผู้ใช้ที่ล็อกอินอยู่ (ใช้ได้ทั้งผู้ดูแลระบบและพนักงาน)
+ */
 class PasswordController extends Controller
 {
-    /**
-     * Update the user's password.
-     */
-    public function update(Request $request): RedirectResponse
+    public function edit(CurrentActor $current): View
     {
-        $validated = $request->validateWithBag('updatePassword', [
-            'current_password' => ['required', 'current_password'],
-            'password' => ['required', Password::defaults(), 'confirmed'],
+        return view('auth.edit-password', [
+            'actor' => $current->actor(),
+        ]);
+    }
+
+    public function update(Request $request, CurrentActor $current): RedirectResponse
+    {
+        $actor = $current->actor();
+
+        $validated = $request->validate([
+            'current_password' => ['required', 'current_password:'.$actor->authGuard()],
+            'password' => ['required', 'confirmed', Password::min(8)],
         ]);
 
-        $request->user()->update([
-            'password' => Hash::make($validated['password']),
-        ]);
+        $actor->forceFill([$actor->getAuthPasswordName() => $validated['password']])->save();
 
-        return back()->with('status', 'password-updated');
+        return redirect()
+            ->route($actor->homeRoute())
+            ->with('success', 'เปลี่ยนรหัสผ่านเรียบร้อยแล้ว');
     }
 }

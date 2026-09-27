@@ -3,143 +3,122 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Services\CurrentActor;
 use App\Services\SupabaseStorage;
 use Carbon\Carbon;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 use RuntimeException;
+use Throwable;
 
 class CheckInController extends Controller
 {
     /**
-     * Show the selfie capture page for a booking.
+     * หน้าถ่ายรูปเซลฟี่เพื่อเช็คอิน
      */
-    public function create(Request $request, Booking $booking): View|RedirectResponse
+    public function create(Request $request, Booking $booking, CurrentActor $current): View|RedirectResponse
     {
-        abort_unless($booking->user_id === $request->user()->id, 403, 'ไม่ใช่การจองของคุณ');
+        $this->authorizeBooking($booking, $current);
 
-        if ($booking->status !== Booking::STATUS_CONFIRMED) {
-            return redirect()->route('dashboard')->with('info', 'ไม่สามารถเช็คอินได้เนื่องจากสถานะไม่ใช่ "รอเช็คอิน"');
+        if (! $booking->isReserved()) {
+            return redirect()->route('bookings.mine')->with('error', 'สถานะไม่ใช่ "จองแล้ว (รอเช็คอิน)" จึงเช็คอินไม่ได้');
         }
 
-        $window = $this->window($booking);
-
-        if ($window['now']->lte($window['open'])) {
-            return redirect()->route('dashboard')->with('error', 'ยังไม่ถึงเวลาเช็คอิน ให้เช็คอินก่อนเวลาเริ่มได้สูงสุด '.config('booking.early_checkin_minutes', 60).' นาที');
+        if (Carbon::now()->lt($booking->checkinOpensAt())) {
+            return redirect()->route('bookings.mine')
+                ->with('error', 'ยังไม่ถึงเวลาเช็คอิน เปิดให้เช็คอินก่อนเวลาเริ่มได้สูงสุด '.config('booking.early_checkin_minutes').' นาที');
         }
-
-        if ($window['now']->gt($window['deadline'])) {
-            $booking->update(['status' => Booking::STATUS_EXPIRED, 'cancel_reason' => Booking::CANCEL_AUTO_LATE]);
-
-            return redirect()->route('dashboard')->with('error', 'เกินเวลาเช็คอินที่กำหนดแล้ว ('.config('booking.late_grace_minutes', 60).' นาที) ระบบยกเลิกใบจองให้อัตโนมัติ');
-        }
-
-        $challenges = config('selfie_challenges.list', []);
 
         return view('bookings.checkin', [
-            'booking' => $booking->load(['desk.zone', 'timeSlot']),
-            'challenge' => $challenges[max(0, Carbon::today()->copy()->tz('Asia/Bangkok')->dayOfYear % count($challenges))],
-            'deadline' => $window['deadline'],
-            'earlyMinutes' => config('booking.early_checkin_minutes', 60),
-            'graceMinutes' => config('booking.late_grace_minutes', 60),
+            'booking' => $booking->load(['desk.zone', 'employee.department']),
+            'deadline' => $booking->checkinDeadline(),
         ]);
     }
 
     /**
-     * Upload the selfie and mark the booking as checked in.
+     * อัปโหลดรูปเซลฟี่ -> booking_status = 'C' พร้อม actual_checkin_time
      */
-    public function store(Request $request, Booking $booking): RedirectResponse
+    public function store(Request $request, Booking $booking, CurrentActor $current): RedirectResponse
     {
-        abort_unless($booking->user_id === $request->user()->id, 403, 'ไม่ใช่การจองของคุณ');
-        abort_if($booking->status !== Booking::STATUS_CONFIRMED, 422, 'สถานะไม่สามารถเช็คอินได้');
-        abort_if($booking->checked_in_at, 422, 'เช็คอินแล้ว');
+        $this->authorizeBooking($booking, $current);
 
-        $window = $this->window($booking);
+        abort_unless($booking->isReserved(), 422, 'สถานะไม่สามารถเช็คอินได้');
 
-        if ($window['now']->gt($window['deadline'])) {
-            $booking->update(['status' => Booking::STATUS_EXPIRED, 'cancel_reason' => Booking::CANCEL_AUTO_LATE]);
+        if (Carbon::now()->gt($booking->checkinDeadline())) {
+            $booking->forceFill(['booking_status' => Booking::STATUS_EXPIRED])->save();
 
-            return redirect()->route('dashboard')->with('error', 'เกินเวลาเช็คอินที่กำหนดแล้ว ระบบยกเลิกใบจองให้อัตโนมัติ.');
+            return redirect()->route('bookings.mine')
+                ->with('error', 'เกินเวลาเช็คอินที่กำหนด ('.config('booking.late_grace_minutes').' นาที) ระบบยกเลิกใบจองให้อัตโนมัติ');
         }
 
         $request->validate([
-            'photo' => ['required', 'image', 'mimes:jpeg,png,webp', 'max:'.config('booking.checkin_photo_max_kb', 5120)],
+            'photo' => [
+                'required',
+                'image',
+                'mimes:'.implode(',', (array) config('booking.checkin_photo_mimes', ['jpeg', 'png', 'webp'])),
+                'max:'.config('booking.checkin_photo_max_kb', 5120),
+            ],
         ]);
 
-        $challenges = config('selfie_challenges.list', []);
-        $challenge = $challenges[max(0, Carbon::today()->copy()->tz('Asia/Bangkok')->dayOfYear % count($challenges))];
-
         $photo = $request->file('photo');
-        $ext = match ($photo->extension()) {
-            'webp' => 'webp',
-            'png' => 'png',
-            default => 'jpg',
-        };
-
-        $path = 'checkins/u'.$booking->user_id.'/b'.$booking->id.'/'.Carbon::now()->format('YmdHis').'.'.$ext;
+        $path = 'checkins/'.$booking->employee_id.'/'.$booking->booking_id.'/'.Carbon::now()->format('YmdHis').'.'.$photo->extension();
 
         try {
             (new SupabaseStorage)->upload($path, (string) $photo->get(), $photo->getMimeType());
-        } catch (RuntimeException) {
+        } catch (RuntimeException|ConnectionException) {
             return back()->with('error', 'อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
         }
 
-        $booking->update([
-            'status' => Booking::STATUS_CHECKED_IN,
-            'checked_in_at' => Carbon::now(),
-            'checkin_photo_path' => $path,
-            'checkin_challenge' => $challenge,
-        ]);
+        $booking->forceFill([
+            'booking_status' => Booking::STATUS_CHECKED_IN,
+            'actual_checkin_time' => Carbon::now(),
+            'checkin_photo' => $path,
+        ])->save();
 
-        return redirect()->route('dashboard')->with('success', 'เช็คอินสำเร็จ ขอให้ทำงานอย่างมีความสุข! 🤙');
+        return redirect()->route('bookings.mine')->with('success', 'เช็คอินสำเร็จ ขอให้ทำงานอย่างมีความสุข');
     }
 
     /**
-     * Check out a currently checked-in booking.
+     * เช็คเอาต์ -> booking_status = 'COMP' พร้อม actual_checkout_time
      */
-    public function checkout(Request $request, Booking $booking): RedirectResponse
+    public function checkout(Request $request, Booking $booking, CurrentActor $current): RedirectResponse
     {
-        abort_unless($booking->user_id === $request->user()->id, 403, 'ไม่ใช่การจองของคุณ');
+        $this->authorizeBooking($booking, $current);
 
-        abort_if($booking->status !== Booking::STATUS_CHECKED_IN, 422, 'สถานะไม่สามารถเช็คเอาต์ได้');
+        abort_unless($booking->isCheckedIn(), 422, 'สถานะไม่สามารถเช็คเอาต์ได้');
 
-        $booking->update([
-            'status' => Booking::STATUS_CHECKED_OUT,
-            'checked_out_at' => Carbon::now(),
-        ]);
+        $booking->forceFill([
+            'booking_status' => Booking::STATUS_COMPLETED,
+            'actual_checkout_time' => Carbon::now(),
+        ])->save();
 
-        return back()->with('success', 'เช็คเอาต์เรียบร้อยแล้ว เจอกันใหม่ครั้งหน้า!');
+        return redirect()->route('bookings.mine')->with('success', 'เช็คเอาต์เรียบร้อยแล้ว เจอกันใหม่ครั้งหน้า');
     }
 
     /**
-     * Resolve the check-in window: [open, deadline].
-     *
-     * @return array{now:Carbon, open:Carbon, deadline:Carbon}
+     * ดูรูปเช็คอิน (เจ้าของใบจองหรือผู้ดูแลระบบ)
      */
-    private function window(Booking $booking): array
+    public function photo(Request $request, Booking $booking, CurrentActor $current): RedirectResponse
     {
-        $now = Carbon::now();
+        $isOwner = $booking->employee_id === $current->employee()?->employee_id;
 
-        return [
-            'now' => $now,
-            'open' => $booking->starts_at->copy()->subMinutes((int) config('booking.early_checkin_minutes', 60)),
-            'deadline' => $booking->starts_at->copy()->addMinutes((int) config('booking.late_grace_minutes', 60)),
-        ];
-    }
+        abort_unless($isOwner || $current->isAdministrator(), 403, 'ไม่มีสิทธิ์ดูรูปนี้');
+        abort_unless($booking->checkin_photo, 404, 'ยังไม่มีรูปเช็คอิน');
 
-    /**
-     * Redirect to the selfie image (owner or admin only).
-     */
-    public function photo(Request $request, Booking $booking): RedirectResponse
-    {
-        abort_unless($request->user()->isAdmin() || $booking->user_id === $request->user()->id, 403, 'ไม่มีสิทธิ์ดูรูปนี้');
-        abort_unless($booking->checkin_photo_path, 404, 'ยังไม่มีรูปเช็คอิน');
+        $storage = new SupabaseStorage;
 
         try {
-            return redirect()->away((new SupabaseStorage)->signedUrl($booking->checkin_photo_path, 3600));
-        } catch (RuntimeException) {
-            return redirect()->away((new SupabaseStorage)->publicUrl($booking->checkin_photo_path));
+            return redirect()->away($storage->signedUrl($booking->checkin_photo, 3600));
+        } catch (Throwable) {
+            // Storage ใช้งานไม่ได้ชั่วคราว — ถอยไปใช้ public URL แทน
+            return redirect()->away($storage->publicUrl($booking->checkin_photo));
         }
+    }
+
+    private function authorizeBooking(Booking $booking, CurrentActor $current): void
+    {
+        abort_unless($booking->employee_id === $current->employee()?->employee_id, 403, 'ไม่ใช่การจองของคุณ');
     }
 }
