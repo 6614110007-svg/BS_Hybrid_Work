@@ -8,6 +8,7 @@ use App\Models\Zone;
 use App\Support\TimeSlot;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * สรุปสถิติการใช้งานสำหรับ Admin Dashboard และหน้ารายงาน
@@ -17,30 +18,40 @@ class Analytics
     /**
      * สถานะโต๊ะ "ตอนนี้" แบบ real-time สำหรับหน้า Dashboard
      *
+     * รวม query ที่เคยทำ 5 ครั้ง (นับการจอง 3 ครั้ง + นับโต๊ะ 2 ครั้ง)
+     * ให้เหลือ 2 ครั้ง โดยนับสถานะของวันนี้ครั้งเดียวแล้วนำมาบวกกันใน PHP
+     *
      * @return array{using_now:int, available_now:int, total_usable_desks:int, today_bookings:int, today_checked_in:int, today_rate:int, maintenance:int}
      */
     public function liveCounts(): array
     {
         $today = Carbon::today()->toDateString();
 
-        $usingNow = Booking::forDate($today)
-            ->where('booking_status', Booking::STATUS_CHECKED_IN)
-            ->count();
-
-        $totalUsable = Desk::usable()->count();
-        $maintenance = Desk::maintenance()->count();
-
-        $todayBookings = Booking::forDate($today)
+        /** @var \Illuminate\Support\Collection<string, int> $todayStatuses */
+        $todayStatuses = Booking::forDate($today)
             ->whereIn('booking_status', [
                 Booking::STATUS_RESERVED,
                 Booking::STATUS_CHECKED_IN,
                 Booking::STATUS_COMPLETED,
             ])
-            ->count();
+            ->reorder()
+            ->groupBy('booking_status')
+            ->selectRaw('booking_status, count(*) as total')
+            ->get()
+            ->mapWithKeys(fn ($row) => [$row->booking_status => (int) $row->total]);
 
-        $todayCheckedIn = Booking::forDate($today)
-            ->whereIn('booking_status', [Booking::STATUS_CHECKED_IN, Booking::STATUS_COMPLETED])
-            ->count();
+        $desks = Desk::query()
+            ->reorder()
+            ->selectRaw('count(*) as total')
+            ->selectRaw('sum(case when desk_status = ? then 1 else 0 end) as maintenance', [Desk::STATUS_MAINTENANCE])
+            ->first();
+
+        $totalUsable = max((int) ($desks->total ?? 0) - (int) ($desks->maintenance ?? 0), 0);
+        $maintenance = (int) ($desks->maintenance ?? 0);
+
+        $usingNow = $todayStatuses->get(Booking::STATUS_CHECKED_IN, 0);
+        $todayCheckedIn = $usingNow + $todayStatuses->get(Booking::STATUS_COMPLETED, 0);
+        $todayBookings = $todayCheckedIn + $todayStatuses->get(Booking::STATUS_RESERVED, 0);
 
         return [
             'using_now' => $usingNow,
@@ -60,7 +71,7 @@ class Analytics
      */
     public function zoneOccupancy(string $date): array
     {
-        $zones = Zone::with('desks')->orderBy('zone_name')->get();
+        $zones = $this->zonesWithDesks();
 
         $bookings = Booking::active()
             ->forDate($date)
@@ -70,10 +81,9 @@ class Analytics
 
         $slots = TimeSlot::all();
 
-        return $zones->map(function (Zone $zone) use ($slots, $bookings) {
-            $desks = $zone->desks;
-            $usable = $desks->reject(fn (Desk $desk) => $desk->isMaintenance());
-            $usableIds = $usable->pluck('desk_id')->all();
+        return collect($zones)->map(function (array $zone) use ($slots, $bookings) {
+            $usableIds = $zone['desk_ids'];
+            $total = count($usableIds);
 
             $slotRows = array_map(function (TimeSlot $slot) use ($bookings, $usableIds) {
                 $taken = $bookings->get($slot->name, []);
@@ -89,10 +99,10 @@ class Analytics
             $occupied = max(array_map(fn ($row) => $row['occupied'], $slotRows) ?: [0]);
 
             return [
-                'zone_id' => $zone->zone_id,
-                'zone_name' => $zone->zone_name,
-                'total' => count($usableIds),
-                'maintenance' => $desks->filter(fn (Desk $desk) => $desk->isMaintenance())->count(),
+                'zone_id' => $zone['zone_id'],
+                'zone_name' => $zone['zone_name'],
+                'total' => $total,
+                'maintenance' => $zone['maintenance_count'],
                 'occupied' => $occupied,
                 'pct' => $usableIds !== [] ? round($occupied / count($usableIds) * 100) : 0,
                 'slots' => $slotRows,
@@ -175,6 +185,28 @@ class Analytics
             ->values();
     }
 
+    /**
+     * โซนพร้อมโต๊ะทั้งหมด — cache ไว้ เพราะเป็นข้อมูลโครงสร้างที่เปลี่ยนบ่อยมาก
+     * แต่ถูกอ่านทุกครั้งที่เปิดหน้า dashboard และหน้ารายงาน
+     *
+     * @return \Illuminate\Support\Collection<int, Zone>
+     */
+    private function zonesWithDesks()
+    {
+        // เก็บเป็น array ดิบ ไม่เก็บ Eloquent collection
+        // เพราะ cache store แบบ file/database จะ unserialize เป็น
+        // __PHP_Incomplete_Class แล้วทำให้หน้าแดชบอร์ดข้อผิดพลาด
+        return Cache::remember(
+            'analytics:zones-with-desks',
+            now()->addMinutes(10),
+            fn () => Zone::with('desks')->orderBy('zone_name')->get()->map(fn (Zone $zone) => [
+                'zone_id' => $zone->zone_id,
+                'zone_name' => $zone->zone_name,
+                'desk_ids' => $zone->desks->reject->isMaintenance()->pluck('desk_id')->all(),
+                'maintenance_count' => $zone->desks->filter->isMaintenance()->count(),
+            ])->all(),
+        );
+    }
     /**
      * กิจกรรมล่าสุด (booking / check-in / check-out) สำหรับ feed บนหน้า Dashboard
      *

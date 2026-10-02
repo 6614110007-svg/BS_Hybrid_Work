@@ -55,6 +55,8 @@ Route::middleware('actor')->group(function () {
 Route::middleware(['employee', 'actor.active'])->group(function () {
     Route::get('/dashboard', [SeatMapController::class, 'index'])->name('dashboard');
     Route::get('/seatmap/status', [SeatMapController::class, 'status'])->name('seatmap.status');
+    // โหลดเฉพาะผังโต๊ะเป็น HTML ผ่าน fetch ตอนเปลี่ยนวันที่/ช่วงเวลา/โซน
+    Route::get('/seatmap/partial', [SeatMapController::class, 'partial'])->name('seatmap.partial');
 
     Route::get('/bookings', [BookingController::class, 'mine'])->name('bookings.mine');
     Route::post('/bookings', [BookingController::class, 'store'])->name('bookings.store');

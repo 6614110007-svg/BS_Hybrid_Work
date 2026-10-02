@@ -5,16 +5,23 @@ namespace App\Http\Controllers;
 use App\Models\Booking;
 use App\Services\CurrentActor;
 use App\Services\SupabaseStorage;
+use App\Support\SelfieChallenge;
 use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use RuntimeException;
 use Throwable;
 
 class CheckInController extends Controller
 {
+    /**
+     * ข้อความเดียวกันทั้ง GET/POST และหน้ารายการจอง
+     */
+    public const EXPIRED_MESSAGE = 'รายการจองนี้หมดเวลาเช็คอินแล้ว';
+
     /**
      * หน้าถ่ายรูปเซลฟี่เพื่อเช็คอิน
      */
@@ -26,6 +33,13 @@ class CheckInController extends Controller
             return redirect()->route('bookings.mine')->with('error', 'สถานะไม่ใช่ "จองแล้ว (รอเช็คอิน)" จึงเช็คอินไม่ได้');
         }
 
+        $challenge = SelfieChallenge::random();
+
+        // เลยเวลาเช็คอินแล้ว = ปิดวงจรทันที ไม่ต้องรอคิวตั้งเวลา
+        if ($booking->expireIfOverdue()) {
+            return redirect()->route('bookings.mine')->with('error', self::EXPIRED_MESSAGE);
+        }
+
         if (Carbon::now()->lt($booking->checkinOpensAt())) {
             return redirect()->route('bookings.mine')
                 ->with('error', 'ยังไม่ถึงเวลาเช็คอิน เปิดให้เช็คอินก่อนเวลาเริ่มได้สูงสุด '.config('booking.early_checkin_minutes').' นาที');
@@ -34,6 +48,9 @@ class CheckInController extends Controller
         return view('bookings.checkin', [
             'booking' => $booking->load(['desk.zone', 'employee.department']),
             'deadline' => $booking->checkinDeadline(),
+            // Same-Day Walk-in (จองหลังเวลาเริ่มสล็อต) ให้นับเวลาเช็คอินจากเวลาที่กดจอง
+            'isWalkIn' => $booking->checkinAnchor()->gt($booking->startsAt()),
+            'challenge' => $challenge,
         ]);
     }
 
@@ -44,22 +61,23 @@ class CheckInController extends Controller
     {
         $this->authorizeBooking($booking, $current);
 
-        abort_unless($booking->isReserved(), 422, 'สถานะไม่สามารถเช็คอินได้');
-
-        if (Carbon::now()->gt($booking->checkinDeadline())) {
-            $booking->forceFill(['booking_status' => Booking::STATUS_EXPIRED])->save();
-
-            return redirect()->route('bookings.mine')
-                ->with('error', 'เกินเวลาเช็คอินที่กำหนด ('.config('booking.late_grace_minutes').' นาที) ระบบยกเลิกใบจองให้อัตโนมัติ');
+        if (! $booking->isReserved()) {
+            return redirect()->route('bookings.mine')->with('error', 'สถานะไม่สามารถเช็คอินได้');
         }
 
-        $request->validate([
+        if ($booking->expireIfOverdue()) {
+            return redirect()->route('bookings.mine')->with('error', self::EXPIRED_MESSAGE);
+        }
+
+        $data = $request->validate([
             'photo' => [
                 'required',
                 'image',
                 'mimes:'.implode(',', (array) config('booking.checkin_photo_mimes', ['jpeg', 'png', 'webp'])),
                 'max:'.config('booking.checkin_photo_max_kb', 5120),
             ],
+            // โจทย์ที่แสดงบนหน้าเว็บส่งกลับมาให้บันทึกไว้ เพื่อแสดงย้อนหลังใน lightbox
+            'selfie_prompt' => ['nullable', 'string', Rule::in(SelfieChallenge::texts())],
         ]);
 
         $photo = $request->file('photo');
@@ -75,6 +93,7 @@ class CheckInController extends Controller
             'booking_status' => Booking::STATUS_CHECKED_IN,
             'actual_checkin_time' => Carbon::now(),
             'checkin_photo' => $path,
+            'selfie_prompt' => $data['selfie_prompt'] ?? null,
         ])->save();
 
         return redirect()->route('bookings.mine')->with('success', 'เช็คอินสำเร็จ ขอให้ทำงานอย่างมีความสุข');

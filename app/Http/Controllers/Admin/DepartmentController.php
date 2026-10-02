@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Department;
+use App\Support\OptionCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -27,6 +28,8 @@ class DepartmentController extends Controller
     {
         Department::create($this->validated($request));
 
+        OptionCache::flush();
+
         return to_route('admin.departments.index')->with('success', 'เพิ่มแผนกเรียบร้อยแล้ว');
     }
 
@@ -39,6 +42,8 @@ class DepartmentController extends Controller
     {
         $department->update($this->validated($request, $department));
 
+        OptionCache::flush();
+
         return to_route('admin.departments.index')->with('success', 'บันทึกข้อมูลแผนกเรียบร้อยแล้ว');
     }
 
@@ -50,6 +55,8 @@ class DepartmentController extends Controller
         }
 
         $department->delete();
+
+        OptionCache::flush();
 
         return to_route('admin.departments.index')->with('success', 'ลบแผนกเรียบร้อยแล้ว');
     }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Desk;
 use App\Models\Zone;
 use App\Services\DeskStatusManager;
+use App\Support\OptionCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,7 @@ class DeskController extends Controller
     {
         return view('admin.desks.index', [
             'desks' => Desk::with('zone')->orderBy('zone_id')->orderBy('desk_number')->paginate(20),
-            'zones' => Zone::orderBy('zone_name')->get(),
+            'zones' => OptionCache::zones(),
         ]);
     }
 
@@ -26,7 +27,7 @@ class DeskController extends Controller
     {
         return view('admin.desks.form', [
             'desk' => null,
-            'zones' => Zone::orderBy('zone_name')->get(),
+            'zones' => OptionCache::zones(),
             'statuses' => Desk::statusOptions(),
         ]);
     }
@@ -35,6 +36,8 @@ class DeskController extends Controller
     {
         Desk::create($this->validated($request));
 
+        OptionCache::flush();
+
         return to_route('admin.desks.index')->with('success', 'เพิ่มโต๊ะเรียบร้อยแล้ว');
     }
 
@@ -42,7 +45,7 @@ class DeskController extends Controller
     {
         return view('admin.desks.form', [
             'desk' => $desk,
-            'zones' => Zone::orderBy('zone_name')->get(),
+            'zones' => OptionCache::zones(),
             'statuses' => Desk::statusOptions(),
         ]);
     }
@@ -50,6 +53,8 @@ class DeskController extends Controller
     public function update(Request $request, Desk $desk): RedirectResponse
     {
         $desk->update($this->validated($request, $desk));
+
+        OptionCache::flush();
 
         return to_route('admin.desks.index')->with('success', 'บันทึกข้อมูลโต๊ะเรียบร้อยแล้ว');
     }
@@ -62,6 +67,7 @@ class DeskController extends Controller
         }
 
         $desk->delete();
+        OptionCache::flush();
 
         return to_route('admin.desks.index')->with('success', 'ลบโต๊ะเรียบร้อยแล้ว');
     }
@@ -81,6 +87,9 @@ class DeskController extends Controller
         }
 
         $desk->forceFill(['desk_status' => $data['desk_status']])->save();
+
+        // จำนวนโต๊ะที่ใช้งานได้ถูกใช้ในสถิติแดชบอร์ด จึงต้องล้าง cache โครงสร้าง
+        OptionCache::flush();
 
         if ($data['desk_status'] === Desk::STATUS_AVAILABLE) {
             $desks->sync($desk);

@@ -1,3 +1,496 @@
+@import 'flatpickr/dist/flatpickr.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+[x-cloak] {
+    display: none !important;
+}
+
+/*
+|--------------------------------------------------------------------------
+| ปฏิทินเลือกวันที่ (Flatpickr) — Theme Indigo
+|--------------------------------------------------------------------------
+| โหลด flatpickr/dist/flatpickr.css ไว้ก่อน แล้ว override ทีหลังในไฟล์นี้
+*/
+
+.booking-picker__input {
+    width: 100%;
+    cursor: pointer;
+    border: 1px solid #D1D5DB;
+    border-radius: 0.75rem;
+    background-color: #FFFFFF;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: #111827;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* ช่องนี้ใช้คลิกเลือกวันที่เท่านั้น ไม่ต้องให้เคอร์เซอร์เป็นเส้นพิมพ์ */
+.booking-picker__input[readonly] {
+    cursor: pointer;
+}
+
+.booking-picker__input:focus {
+    border-color: #6366F1;
+    box-shadow: 0 0 0 1px #6366F1;
+}
+
+/* ไอคอนปฏิทินอยู่ภายในช่อง input ด้านขวา */
+.booking-date {
+    position: relative;
+}
+
+/* ไม่ดักคลิกไว้ เพื่อให้คลิกที่ไอคอนแล้วเปิดปฏิทินได้เหมือนกันคลิกที่ช่อง */
+.booking-date__icon {
+    position: absolute;
+    top: 50%;
+    right: 0.75rem;
+    font-size: 1rem;
+    line-height: 1;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.booking-date .booking-picker__input {
+    padding-right: 2.5rem;
+}
+
+.flatpickr-calendar {
+    z-index: 9999;
+    width: 352px;
+    overflow: visible;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.92);
+    padding: 0.75rem;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 20px 45px -12px rgba(15, 23, 42, 0.25);
+}
+
+/* ปฏิทินลอยเป็นการ์ด ไม่ต้องมีลูกศรชี้ที่ปุ่ม */
+.flatpickr-calendar.arrowTop::before,
+.flatpickr-calendar.arrowTop::after,
+.flatpickr-calendar.arrowBottom::before,
+.flatpickr-calendar.arrowBottom::after {
+    display: none;
+}
+
+/* เดือน/ปี: ใหญ่และเข้ม เป็นจุดเด่นของหัวปฏิทิน */
+.flatpickr-calendar .flatpickr-months {
+    align-items: center;
+    margin-bottom: 0.25rem;
+}
+
+.flatpickr-calendar .flatpickr-current-month {
+    color: #1F2937;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    line-height: 1.75rem;
+}
+
+.flatpickr-calendar .flatpickr-current-month.year {
+    margin-left: 0.3rem;
+    color: #4F46E5;
+    font-size: 0.8125rem;
+    font-weight: 600;
+}
+
+/* ปุ่มเลื่อนเดือน: วงกลม โปร่ง และชัดเมื่อ hover */
+.flatpickr-calendar .flatpickr-months .flatpickr-prev-month,
+.flatpickr-calendar .flatpickr-months .flatpickr-next-month {
+    top: 0.4rem;
+    display: flex;
+    height: 2rem;
+    width: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    padding: 0;
+    color: #4B5563;
+    fill: #4B5563;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.flatpickr-calendar .flatpickr-months .flatpickr-prev-month svg,
+.flatpickr-calendar .flatpickr-months .flatpickr-next-month svg {
+    height: 1.25rem;
+    width: 1.25rem;
+}
+
+.flatpickr-calendar .flatpickr-months .flatpickr-prev-month:hover,
+.flatpickr-calendar .flatpickr-months .flatpickr-next-month:hover {
+    background-color: #EEF2FF;
+    color: #4F46E5;
+    fill: #4F46E5;
+}
+
+/* ชื่อวัน (จ-อา) เป็นภาษาไทย */
+.flatpickr-calendar .flatpickr-weekdays,
+.flatpickr-calendar span.flatpickr-weekday {
+    color: #6B7280;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: none;
+}
+
+.flatpickr-calendar .flatpickr-weekdays {
+    margin-bottom: 0.25rem;
+}
+
+/* ช่องวันที่: ตัวเลขเข้ม อ่านง่าย และใหญ่ขึ้นเล็กน้อย */
+.flatpickr-calendar .flatpickr-days {
+    border: none;
+}
+
+.flatpickr-calendar .flatpickr-days .flatpickr-day {
+    padding: 2px 0;
+}
+
+/*
+ * flatpickr 4.6.x สร้างช่องวันที่เป็น <span class="flatpickr-day"> ที่มีตัวเลขเป็น text node
+ * ไม่มี element ลูกชื่อ .flatpickr-day__number สไตล์ช่องวันที่จึงต้องกำหนดบน .flatpickr-day โดยตรง
+ */
+.flatpickr-calendar .flatpickr-day {
+    position: relative;
+    display: flex;
+    height: 40px;
+    width: 40px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 9999px;
+    color: #111827;
+    cursor: pointer;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1;
+    transition: box-shadow 0.15s ease, background-color 0.15s ease, color 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.flatpickr-calendar .flatpickr-day:hover,
+.flatpickr-calendar .flatpickr-day:focus {
+    border-color: #C7D2FE;
+    background: #EEF2FF;
+}
+
+.flatpickr-calendar .flatpickr-day.selected,
+.flatpickr-calendar .flatpickr-day.startRange,
+.flatpickr-calendar .flatpickr-day.endRange {
+    border-color: #4F46E5;
+    background: #4F46E5;
+    color: #FFFFFF;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+
+/* วันนี้: จุดสี Indigo ใต้ตัวเลข + pulse */
+.flatpickr-calendar .flatpickr-day.today:not(.selected) {
+    border-color: #A5B4FC;
+    color: #4F46E5;
+    font-weight: 700;
+}
+
+.flatpickr-calendar .flatpickr-day.today:not(.selected)::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 9999px;
+    background-color: #4F46E5;
+    transform: translateX(-50%);
+    animation: booking-dot-pulse 1.8s ease-out infinite;
+}
+
+@keyframes booking-dot-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.45);
+    }
+
+    70% {
+        box-shadow: 0 0 0 6px rgba(79, 70, 229, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(79, 70, 229, 0);
+    }
+}
+
+/* วันนี้ที่ถูกเลือกอยู่: ใช้จุดสีขาวบนพื้น Indigo เพื่อให้ยังเห็นวันปัจจุบันชัดเจน */
+.flatpickr-calendar .flatpickr-day.today.selected,
+.flatpickr-calendar .flatpickr-day.today.startRange,
+.flatpickr-calendar .flatpickr-day.today.endRange {
+    border-color: #FFFFFF;
+}
+
+.flatpickr-calendar .flatpickr-day.today.selected::after,
+.flatpickr-calendar .flatpickr-day.today.startRange::after,
+.flatpickr-calendar .flatpickr-day.today.endRange::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 9999px;
+    background-color: #FFFFFF;
+    transform: translateX(-50%);
+}
+
+/* วันที่เลือกไม่ได้: เสาร์-อาทิตย์ + วันหยุดนักขัตฤกษ์ — สีเทาจาง ขีดฆ่า และห้ามคลิก */
+.flatpickr-calendar .flatpickr-day.flatpickr-disabled,
+.flatpickr-calendar .flatpickr-day.disabled,
+.flatpickr-calendar .booking-day__disabled {
+    border-color: transparent;
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+        45deg,
+        #F3F4F6 0,
+        #F3F4F6 5px,
+        #FFFFFF 5px,
+        #FFFFFF 10px
+    );
+    color: #9CA3AF;
+    cursor: not-allowed;
+    font-weight: 500;
+    text-decoration: line-through;
+    text-decoration-color: #D1D5DB;
+    text-decoration-thickness: 1px;
+}
+
+.flatpickr-calendar .flatpickr-day.flatpickr-disabled:hover,
+.flatpickr-calendar .flatpickr-day.disabled:hover,
+.flatpickr-calendar .booking-day__disabled:hover {
+    border-color: transparent;
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+        45deg,
+        #F3F4F6 0,
+        #F3F4F6 5px,
+        #FFFFFF 5px,
+        #FFFFFF 10px
+    );
+    color: #9CA3AF;
+}
+
+/* Tooltip สีเทาอ่อนบอกเหตุผลที่เลือกไม่ได้ */
+.booking-day__disabled {
+    position: relative;
+}
+
+.booking-day__disabled::before {
+    content: attr(data-reason);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    z-index: 30;
+    transform: translate(-50%, 4px);
+    border: 1px solid #E5E7EB;
+    border-radius: 0.5rem;
+    background: #F3F4F6;
+    color: #374151;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
+    padding: 4px 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.booking-day__disabled:hover::before {
+    transform: translate(-50%, 0);
+    opacity: 1;
+}
+
+/*
+|--------------------------------------------------------------------------
+| ปุ่มเลือกช่วงเวลา (Segmented Pills)
+|--------------------------------------------------------------------------
+*/
+
+.booking-pill {
+    border: 1px solid #E5E7EB;
+    border-radius: 9999px;
+    background-color: #FFFFFF;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease,
+        color 0.15s ease;
+}
+
+.booking-pill:hover:not(:disabled) {
+    border-color: #A5B4FC;
+    background-color: #EEF2FF;
+    color: #4338CA;
+}
+
+.booking-pill--active,
+.booking-pill--active:hover:not(:disabled) {
+    border-color: #4F46E5;
+    background-color: #4F46E5;
+    color: #FFFFFF;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+
+.booking-pill--disabled,
+.booking-pill--disabled:hover {
+    cursor: not-allowed;
+    border-style: dashed;
+    border-color: #E5E7EB;
+    background-color: #F9FAFB;
+    color: #D1D5DB;
+    box-shadow: none;
+}
+
+/*
+|--------------------------------------------------------------------------
+| คำอธิบายสัญลักษณ์ในปฏิทิน
+|--------------------------------------------------------------------------
+*/
+
+.booking-legend__disabled {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 1px solid #E5E7EB;
+    border-radius: 0.25rem;
+    background-image: repeating-linear-gradient(45deg, #F3F4F6 0, #F3F4F6 4px, #FFFFFF 4px, #FFFFFF 8px);
+}
+
+.booking-legend__today {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background-color: #4F46E5;
+}
+
+/*
+|--------------------------------------------------------------------------
+| ตัวบอกสถานะกำลังโหลด (Loading)
+|--------------------------------------------------------------------------
+| ใช้ร่วมกันทุกปุ่ม/ฟอร์ม/ตัวกรอง ผ่าน data-loading-button และ data-loading-form
+*/
+
+.app-loading-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 10000;
+    height: 3px;
+    width: 100%;
+    transform: scaleX(0);
+    transform-origin: left center;
+    background: linear-gradient(90deg, #6366F1, #A855F7);
+    opacity: 0;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.app-loading-bar[data-active='true'] {
+    transform: scaleX(0.9);
+    opacity: 1;
+}
+
+.app-spinner {
+    display: inline-block;
+    height: 1em;
+    width: 1em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 9999px;
+    vertical-align: -0.125em;
+    animation: app-spinner 0.7s linear infinite;
+}
+
+@keyframes app-spinner {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ปุ่มที่กำลังทำงาน: กดซ้ำไม่ได้ + มีวงกลมหมุนแทนข้อความเดิม */
+[data-loading-button][data-busy='true'],
+[data-loading-button]:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+[data-loading-button][data-busy='true'] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ผังโต๊ะที่กำลัง refresh ผ่าน fetch
+| ขอบเขต: เฉพาะ [data-seatmap-body] เพื่อไม่ให้กระทบส่วนอื่นของหน้า
+*/
+[data-ajax-region] {
+    position: relative;
+}
+
+/* ทำให้ผังโต๊ะจางลงเล็กน้อย แต่ยังเห็นโครงร่างเดิมอยู่
+| transition อยู่ที่ element ที่เปลี่ยน opacity จริง ไม่ใช่ที่ container
+*/
+[data-ajax-region] [data-seatmap-body] {
+    transition: opacity 0.18s ease, filter 0.18s ease;
+}
+
+[data-ajax-region][data-busy='true'] {
+    pointer-events: none;
+}
+
+[data-ajax-region][data-busy='true'] [data-seatmap-body] {
+    opacity: 0.45;
+    filter: saturate(0.7);
+}
+
+/* แถบแสงวิ่งผ่านแบบ skeleton */
+[data-ajax-region][data-busy='true']::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    border-radius: 1rem;
+    background: linear-gradient(
+        100deg,
+        transparent 20%,
+        rgba(255, 255, 255, 0.75) 45%,
+        rgba(255, 255, 255, 0.75) 55%,
+        transparent 80%
+    );
+    background-size: 250% 100%;
+    animation: seatmap-shimmer 1.1s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes seatmap-shimmer {
+    from {
+        background-position: 180% 0;
+    }
+
+    to {
+        background-position: -80% 0;
+    }
+}
+
+/* เคารพการตั้งค่าลดการเคลื่อนไหวของผู้ใช้ */
+@media (prefers-reduced-motion: reduce) {
+    [data-ajax-region] [data-seatmap-body] {
+        transition: none;
+    }
+
+    [data-ajax-region][data-busy='true']::after {
+        animation: none;
+        background: rgba(249, 250, 251, 0.45);
+    }
+}

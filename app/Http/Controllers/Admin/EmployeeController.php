@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Support\OptionCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -33,7 +34,7 @@ class EmployeeController extends Controller
 
         return view('admin.employees.index', [
             'employees' => $employees,
-            'departments' => Department::orderBy('department_name')->get(),
+            'departments' => self::departmentOptions(),
             'roles' => Employee::roleOptions(),
             'statuses' => Employee::statusOptions(),
         ]);
@@ -52,6 +53,7 @@ class EmployeeController extends Controller
         unset($data['password'], $data['password_confirmation']);
 
         $employee = Employee::create($data);
+        OptionCache::flush();
 
         return to_route('admin.employees.index')
             ->with('success', "เพิ่มพนักงาน {$employee->employee_fullname} เรียบร้อยแล้ว");
@@ -73,6 +75,7 @@ class EmployeeController extends Controller
         unset($data['password'], $data['password_confirmation']);
 
         $employee->fill($data)->save();
+        OptionCache::flush();
 
         return to_route('admin.employees.index')
             ->with('success', "บันทึกข้อมูล {$employee->employee_fullname} เรียบร้อยแล้ว");
@@ -86,6 +89,7 @@ class EmployeeController extends Controller
         }
 
         $employee->delete();
+        OptionCache::flush();
 
         return to_route('admin.employees.index')->with('success', 'ลบพนักงานเรียบร้อยแล้ว');
     }
@@ -99,6 +103,7 @@ class EmployeeController extends Controller
         $employee->forceFill([
             'employee_status' => $employee->isActive() ? Employee::STATUS_INACTIVE : Employee::STATUS_ACTIVE,
         ])->save();
+        OptionCache::flush();
 
         return back()->with('success', "เปลี่ยนสถานะ {$employee->employee_fullname} เป็น {$employee->statusLabel()} แล้ว");
     }
@@ -107,10 +112,21 @@ class EmployeeController extends Controller
     {
         return [
             'employee' => $employee,
-            'departments' => Department::orderBy('department_name')->get(),
+            'departments' => self::departmentOptions(),
             'roles' => Employee::roleOptions(),
             'statuses' => Employee::statusOptions(),
         ];
+    }
+
+    /**
+     * ตัวเลือกแผนก — cache ไว้ เพราะอ่านซ้ำทุกครั้งที่เปิดหน้ารายชื่อ/ฟอร์ม
+     * แต่เปลี่ยนบ่อยมาก โดย DepartmentController จะล้าง cache ให้เอง
+     *
+     * @return \Illuminate\Support\Collection<int, Department>
+     */
+    public static function departmentOptions()
+    {
+        return OptionCache::departments();
     }
 
     private function validated(Request $request, ?Employee $employee = null): array

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Zone;
+use App\Support\OptionCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -27,6 +28,8 @@ class ZoneController extends Controller
     {
         Zone::create($this->validated($request));
 
+        OptionCache::flush();
+
         return to_route('admin.zones.index')->with('success', 'เพิ่มโซนทำงานเรียบร้อยแล้ว');
     }
 
@@ -39,6 +42,8 @@ class ZoneController extends Controller
     {
         $zone->update($this->validated($request, $zone));
 
+        OptionCache::flush();
+
         return to_route('admin.zones.index')->with('success', 'บันทึกข้อมูลโซนเรียบร้อยแล้ว');
     }
 
@@ -50,6 +55,8 @@ class ZoneController extends Controller
         }
 
         $zone->delete();
+
+        OptionCache::flush();
 
         return to_route('admin.zones.index')->with('success', 'ลบโซนเรียบร้อยแล้ว');
     }

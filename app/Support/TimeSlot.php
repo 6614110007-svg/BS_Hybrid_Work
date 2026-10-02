@@ -11,6 +11,13 @@ use InvalidArgumentException;
  */
 final class TimeSlot
 {
+    /**
+     * หลังเวลานี้ของ "วันเดียวกัน" สล็อตที่เริ่มก่อนหมดเวลา (Full Day / Morning)
+     * จะถือว่าหมดเวลาเช็คอินของวันนี้แล้ว ระบบจะปิดไม่ให้เลือก
+     * และให้เลือกสล็อตที่ยังเหลือเวลาแทน (เช่น จองรอบบ่ายตอน 15:00 น.)
+     */
+    public const SAME_DAY_SWITCH_AFTER = '12:00';
+
     public function __construct(
         public readonly string $name,
         public readonly string $start,
@@ -99,5 +106,35 @@ final class TimeSlot
     public function containsTime(Carbon $moment): bool
     {
         return $moment->betweenIncluded($this->openOn($moment->toDateString()), $this->closeOn($moment->toDateString()));
+    }
+
+    /**
+     * สล็อตนี้ "หมดเวลาแล้ว" สำหรับการจองในวันเดียวกันหรือไม่
+     * เช่น เลือกวันนี้ตอน 15:00 น. -> Full Day (08:00) และ Morning (08:00) ถือว่าหมดเวลา
+     */
+    public function isSameDayExpired(Carbon $date, ?Carbon $now = null): bool
+    {
+        $now ??= Carbon::now();
+        $cutoff = Carbon::parse($date->toDateString().' '.self::SAME_DAY_SWITCH_AFTER);
+
+        return $date->isSameDay($now)
+            && $now->gt($cutoff)
+            && $this->openOn($date->toDateString())->lt($cutoff);
+    }
+
+    /**
+     * สล็อตที่ยังเลือกได้สำหรับวันที่ระบุ (ใช้เป็นค่าเริ่มต้นของหน้า seat map)
+     */
+    public static function firstSelectableOn(Carbon $date, ?Carbon $now = null): self
+    {
+        $now ??= Carbon::now();
+
+        foreach (self::all() as $slot) {
+            if (! $slot->isSameDayExpired($date, $now)) {
+                return $slot;
+            }
+        }
+
+        return self::all()[0];
     }
 }

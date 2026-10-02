@@ -20,10 +20,10 @@
 
     <div class="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         @foreach ([
-            ['label' => 'บัญชีผู้ดูแล', 'value' => $totalAdmins, 'route' => 'admin.employees.index'],
-            ['label' => 'พนักงานทั้งหมด', 'value' => $totalEmployees, 'route' => 'admin.employees.index'],
-            ['label' => 'แผนก', 'value' => $totalDepartments, 'route' => 'admin.departments.index'],
-            ['label' => 'โซน / โต๊ะ', 'value' => $totalZones.' / '.$totalDesks, 'route' => 'admin.desks.index'],
+            ['label' => 'บัญชีผู้ดูแล', 'value' => $totals['total_admins'], 'route' => 'admin.employees.index'],
+            ['label' => 'พนักงานทั้งหมด', 'value' => $totals['total_employees'], 'route' => 'admin.employees.index'],
+            ['label' => 'แผนก', 'value' => $totals['total_departments'], 'route' => 'admin.departments.index'],
+            ['label' => 'โซน / โต๊ะ', 'value' => $totals['total_zones'].' / '.$totals['total_desks'], 'route' => 'admin.desks.index'],
         ] as $card)
             <a href="{{ route($card['route']) }}" class="rounded-xl border border-gray-200 bg-white p-4 hover:border-indigo-300">
                 <p class="text-xs text-gray-500">{{ $card['label'] }}</p>
