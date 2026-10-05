@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Employee;
+use App\Support\AnimalAvatar;
 use App\Support\OptionCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -50,13 +51,23 @@ class EmployeeController extends Controller
         $data = $this->validated($request);
 
         $data['employee_password'] = $data['password'];
+
+        // พนักงานใหม่ต้องตั้งค่าบัญชีครั้งแรกก่อน (ผูกอีเมล/เปลี่ยนรหัสผ่าน/เลือก avatar)
+        // อีเมลที่ผู้ดูแลกรอกไว้ใช้เป็นค่าเริ่มต้น แต่ยังต้องให้พนักงานยืนยันเอง
+        $data['first_login'] = true;
+        $data['employee_avatar'] = $data['employee_avatar'] ?? null;
+
+        // เก็บอีเมลที่ผู้ดูแลกรอกไว้เป็น "อีเมลเดิม" ของบริษัทไว้ด้วย
+        // เผื่อพนักงานผูกอีเมลใหม่ตอน First-Login แล้วต้องแสดงเทียบกันได้ในหน้าโปรไฟล์
+        $data['employee_original_email'] = $data['employee_email'] ?? null;
+
         unset($data['password'], $data['password_confirmation']);
 
         $employee = Employee::create($data);
         OptionCache::flush();
 
         return to_route('admin.employees.index')
-            ->with('success', "เพิ่มพนักงาน {$employee->employee_fullname} เรียบร้อยแล้ว");
+            ->with('success', "เพิ่มพนักงาน {$employee->employee_fullname} ({$employee->employee_id}) เรียบร้อยแล้ว");
     }
 
     public function edit(Employee $employee): View
@@ -115,6 +126,9 @@ class EmployeeController extends Controller
             'departments' => self::departmentOptions(),
             'roles' => Employee::roleOptions(),
             'statuses' => Employee::statusOptions(),
+            // รหัสพนักงานถัดไป แสดงเป็นตัวอย่างรูปแบบ EMP+ปีเดือน+ลำดับ (11 หลัก)
+            'nextEmployeeId' => Employee::nextIdPreview(),
+            'animals' => AnimalAvatar::all(),
         ];
     }
 
@@ -133,17 +147,21 @@ class EmployeeController extends Controller
     {
         return $request->validate([
             'employee_fullname' => ['required', 'string', 'max:255'],
-            'employee_tel' => ['required', 'string', 'max:20'],
+            // เบอร์โทรต้องเป็นตัวเลข 10 หลัก และขึ้นต้นด้วย 0 (เบอร์มือถือไทย)
+            'employee_tel' => ['required', 'string', 'regex:/^0\d{9}$/'],
             'employee_email' => [
                 'required',
                 'email',
                 'max:255',
-                Rule::unique('employee', 'employee_email')->ignore($employee?->getKey()),
+                Rule::unique('employee', 'employee_email')->ignore($employee),
             ],
             'employee_role' => ['required', Rule::in(array_keys(Employee::roleOptions()))],
             'employee_status' => ['required', Rule::in(array_keys(Employee::statusOptions()))],
             'department_id' => ['required', 'string', Rule::exists('department', 'department_id')],
             'password' => [$employee ? 'nullable' : 'required', 'confirmed', Password::min(8)],
+            'employee_avatar' => ['nullable', Rule::in(AnimalAvatar::keys())],
+        ], [], [
+            'employee_tel' => 'เบอร์โทรศัพท์',
         ]);
     }
 }

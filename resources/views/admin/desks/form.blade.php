@@ -4,6 +4,10 @@
 
 @section('content')
     <form method="POST"
+          x-data="deskNumberSuggest"
+          x-ref="root"
+          data-mode="{{ $desk ? 'edit' : 'create' }}"
+          data-suggest-url="{{ route('admin.desks.suggest') }}"
           action="{{ $desk ? route('admin.desks.update', $desk) : route('admin.desks.store') }}"
           class="max-w-2xl rounded-xl border border-gray-200 bg-white p-5">
         @csrf
@@ -13,8 +17,10 @@
 
         <div class="grid gap-4 sm:grid-cols-2">
             <div>
-                <x-input-label for="zone_id" value="โซนพื้นที่" />
+                <x-input-label for="zone_id" value="โซนพื้นที่" required />
                 <select id="zone_id" name="zone_id" required
+                        x-ref="zoneSelect"
+                        x-on:change="$dispatch('zone-changed')"
                         class="mt-1 w-full rounded-lg border-gray-300 text-sm">
                     <option value="">-- เลือกโซน --</option>
                     @foreach ($zones as $option)
@@ -28,21 +34,27 @@
             </div>
 
             <div>
-                <x-input-label for="desk_number" value="หมายเลขโต๊ะ" />
-                <x-text-input id="desk_number" name="desk_number" :value="old('desk_number', $desk?->desk_number)"
+                <x-input-label for="desk_number" value="หมายเลขโต๊ะ" required />
+                <x-text-input id="desk_number" name="desk_number" x-ref="numberInput"
+                              :value="old('desk_number', $desk?->desk_number)"
                               required maxlength="50" class="mt-1 block w-full" />
                 <x-input-error :messages="$errors->get('desk_number')" class="mt-1" />
             </div>
 
             <div>
                 <x-input-label for="map_position" value="ตำแหน่งบนผัง (รูปแบบ x,y)" />
-                <x-text-input id="map_position" name="map_position" :value="old('map_position', $desk?->map_position)"
+                <x-text-input id="map_position" name="map_position" x-ref="gridInput"
+                              :value="old('map_position', $desk?->map_position)"
                               placeholder="เช่น 1,3" maxlength="50" class="mt-1 block w-full" />
                 <x-input-error :messages="$errors->get('map_position')" class="mt-1" />
+                <p class="mt-1 text-xs text-gray-500">
+                    แกน x {{ '0' }}–{{ \App\Support\DeskGrid::MAX_COLUMN }} · แถว y {{ '0' }}–{{ \App\Support\DeskGrid::MAX_ROW }}
+                    และห้ามซ้ำกับโต๊ะตัวอื่นในโซนเดียวกัน
+                </p>
             </div>
 
             <div>
-                <x-input-label for="desk_status" value="สถานะ" />
+                <x-input-label for="desk_status" value="สถานะ" required />
                 <select id="desk_status" name="desk_status" required
                         class="mt-1 w-full rounded-lg border-gray-300 text-sm">
                     @foreach ($statuses as $key => $label)
@@ -54,6 +66,10 @@
                 </select>
                 <x-input-error :messages="$errors->get('desk_status')" class="mt-1" />
             </div>
+        </div>
+
+        <div class="mt-4">
+            @include('admin.desks.suggest-box')
         </div>
 
         <p class="mt-3 text-xs text-gray-500">

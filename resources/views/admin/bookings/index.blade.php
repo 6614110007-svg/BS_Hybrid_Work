@@ -69,7 +69,9 @@
                         <td class="px-4 py-3 text-right">
                             @if ($booking->isCancelable())
                                 <form method="POST" action="{{ route('admin.bookings.destroy', $booking) }}"
-                                      onsubmit="return confirm('ยกเลิกการจองนี้แทนพนักงานหรือไม่?');">
+                                      data-confirm="ยกเลิกการจองของ {{ $booking->employee?->employee_fullname ?? 'พนักงาน' }} วันที่ {{ $booking->booking_date->format('d/m/Y') }} เวลา {{ $booking->start_time }}-{{ $booking->end_time }} แทนพนักงานหรือไม่?"
+                                      data-confirm-title="ยกเลิกการจองแทนพนักงาน"
+                                      data-confirm-text="ยกเลิกการจอง">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit" class="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">

@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Desk;
 use App\Models\Zone;
 use App\Services\DeskStatusManager;
+use App\Support\DeskGrid;
 use App\Support\OptionCache;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +31,24 @@ class DeskController extends Controller
             'desk' => null,
             'zones' => OptionCache::zones(),
             'statuses' => Desk::statusOptions(),
+            'suggestNumber' => Desk::suggestNumber(null),
+            'suggestGrid' => Desk::suggestGridPosition(null),
+        ]);
+    }
+
+    /**
+     * ค่าที่แนะนำสำหรับโต๊ะใหม่ ใช้เติมฟอร์มให้ผู้ดูแลไม่ต้องคิดเลขเอง
+     * คืนเลขโต๊ะถัดไปและช่อง grid ที่ยังว่างของโซนที่เลือก
+     */
+    public function suggest(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'zone_id' => ['required', 'string', Rule::exists('zone', 'zone_id')],
+        ]);
+
+        return response()->json([
+            'desk_number' => Desk::suggestNumber($data['zone_id']),
+            'map_position' => Desk::suggestGridPosition($data['zone_id']),
         ]);
     }
 
@@ -47,6 +67,9 @@ class DeskController extends Controller
             'desk' => $desk,
             'zones' => OptionCache::zones(),
             'statuses' => Desk::statusOptions(),
+            // ข้ามตัวโต๊ะที่กำลังแก้ไขออกจากตัวเลือก เพื่อไม่ให้แนะนำช่องที่ตัวเองใช้อยู่
+            'suggestNumber' => Desk::suggestNumber($desk->zone_id),
+            'suggestGrid' => Desk::suggestGridPosition($desk->zone_id),
         ]);
     }
 
@@ -106,9 +129,36 @@ class DeskController extends Controller
                 'required',
                 'string',
                 'max:50',
-                Rule::unique('desk', 'desk_number')->ignore($desk?->getKey()),
+                Rule::unique('desk', 'desk_number')->ignore($desk),
             ],
-            'map_position' => ['nullable', 'string', 'max:50'],
+            'map_position' => [
+                'nullable',
+                'string',
+                'max:50',
+                // ต้องอยู่ในขอบเขตผัง และห้ามชนกับโต๊ะตัวอื่นในโซนเดียวกัน
+                function (string $attribute, mixed $value, \Closure $fail) use ($request, $desk): void {
+                    if ($value === null || $value === '') {
+                        return;
+                    }
+
+                    if (! DeskGrid::isValid($value)) {
+                        $fail("พิกัดผังต้องอยู่ระหว่าง 0-".DeskGrid::MAX_COLUMN
+                            .' ตามแกน และ 0-'.DeskGrid::MAX_ROW.' ตามแถว');
+
+                        return;
+                    }
+
+                    $clash = Desk::query()
+                        ->where('zone_id', $request->input('zone_id'))
+                        ->where('map_position', $value)
+                        ->when($desk, fn ($query) => $query->where('desk_id', '!=', $desk->getKey()))
+                        ->exists();
+
+                    if ($clash) {
+                        $fail('พิกัดผังนี้มีโต๊ะอื่นในโซนอยู่แล้ว กรุณาเลือกช่องที่ว่าง');
+                    }
+                },
+            ],
             'desk_status' => ['required', Rule::in(array_keys(Desk::statusOptions()))],
         ]);
     }

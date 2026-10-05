@@ -8,9 +8,11 @@ use App\Models\Department;
 use App\Models\Desk;
 use App\Models\Employee;
 use App\Models\Zone;
+use App\Services\SupabaseStorage;
 use App\Support\TimeSlot;
 use Carbon\Carbon;
 use Illuminate\Database\Seeder;
+use Throwable;
 
 /**
  * ข้อมูลตัวอย่างสำหรับทดลองใช้งานระบบในเครื่อง (php artisan db:seed)
@@ -22,6 +24,12 @@ use Illuminate\Database\Seeder;
  */
 class DemoSeeder extends Seeder
 {
+    /** พาธรูปเช็คอินของข้อมูลตัวอย่างใน Storage bucket */
+    public const DEMO_SELFIE_PATH = 'checkins/demo/demo-selfie.jpg';
+
+    /** JPEG สีเทาขนาด 1x1 ใช้เป็นรูปตัวอย่างแทนไฟล์รูปจริง */
+    private const DEMO_SELFIE_JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+
     public function run(): void
     {
         $admin = Admin::updateOrCreate(
@@ -97,6 +105,10 @@ class DemoSeeder extends Seeder
             ]
         );
 
+        // รูปเช็คอินของข้อมูลตัวอย่างเก็บอยู่ใน Supabase Storage
+        // จึงต้องอัปโหลดไฟล์ตัวอย่างให้มีอยู่จริง ไม่เช่นนั้น lightbox จะขึ้นรูปเสีย
+        $this->ensureDemoSelfie();
+
         Booking::updateOrCreate(
             [
                 'employee_id' => $employees[1]->employee_id,
@@ -109,7 +121,7 @@ class DemoSeeder extends Seeder
                 'end_time' => $slots[0]->end,
                 'booking_status' => Booking::STATUS_CHECKED_IN,
                 'actual_checkin_time' => Carbon::now()->subMinutes(10),
-                'checkin_photo' => 'checkins/demo/demo-selfie.jpg',
+                'checkin_photo' => self::DEMO_SELFIE_PATH,
             ]
         );
 
@@ -137,5 +149,26 @@ class DemoSeeder extends Seeder
                 ['พนักงานสิทธิ์ผู้ดูแล', $employees[1]->employee_email, 'password'],
             ]
         );
+    }
+
+    /**
+     * อัปโหลดรูปเช็คอินตัวอย่างเข้า Storage bucket (upsert)
+     *
+     * ถ้าเชื่อมต่อ Supabase ไม่ได้จะข้ามไป เพื่อไม่ให้ db:seed ล้มเหลว
+     * ระบบยังใช้งานได้ปกติ เพียงแต่ lightbox จะไม่มีรูปให้ดู
+     */
+    private function ensureDemoSelfie(): void
+    {
+        try {
+            $binary = base64_decode((string) explode(',', self::DEMO_SELFIE_JPEG, 2)[1], true);
+
+            if ($binary === false || $binary === '') {
+                throw new RuntimeException('แปลงรูปตัวอย่างไม่สำเร็จ');
+            }
+
+            (new SupabaseStorage)->upload(self::DEMO_SELFIE_PATH, $binary, 'image/jpeg');
+        } catch (Throwable $e) {
+            $this->command?->warn('อัปโหลดรูปตัวอย่างไม่สำเร็จ: '.$e->getMessage());
+        }
     }
 }

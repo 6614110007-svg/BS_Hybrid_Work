@@ -47,12 +47,15 @@ class BookingTest extends TestCase
 
     public function test_desk_is_marked_reserved_for_today(): void
     {
+        // desk_status คำนวณจากการจองของ "วันนี้" จึงต้องตรึงวันให้เป็นวันจองได้เสมอ
+        $today = $this->freezeToBookableToday();
+
         [$employee, $desk] = $this->bookingContext();
         $slot = TimeSlot::find('Full Day');
 
         $this->actingAs($employee, 'web')->post('/bookings', [
             'desk_id' => $desk->desk_id,
-            'booking_date' => $this->bookableDate(),
+            'booking_date' => $today->toDateString(),
             'time_slot' => $slot->name,
         ]);
 

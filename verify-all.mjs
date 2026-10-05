@@ -1,6 +1,6 @@
 ﻿// ตรวจงาน 4 ส่วนด้วยเบราว์เซอร์จริง (Chrome DevTools Protocol)
 import { spawn, execFile } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -54,10 +54,11 @@ async function main() {
     const cdp = new Cdp(ws); cdp.listen();
     await cdp.send('Page.enable'); await cdp.send('Runtime.enable');
 
-    // ผู้ใช้เลือก Cancel ใน confirm() -> ต้องไม่ค้าง disabled
+    // ปัจจุบันหน้าต่างใช้ Alpine confirmDialog แทน confirm() ของเบราว์เซอร์แล้ว
+    // override ทิ้งไว้เพื่อจับกรณีถอยกลับไปใช้ native confirm: นับจำนวนครั้งที่ถูกเรียก
     cdp.onConfirm = null;
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: `window.confirm = () => window.__confirmAnswer;`,
+        source: `window.__nativeConfirmCalls = 0; window.confirm = () => { window.__nativeConfirmCalls += 1; return false; };`,
     });
 
     const goto = async (url) => {
@@ -515,17 +516,88 @@ async function main() {
     check(mine.checkinLinks > 0, 'มีปุ่ม "เช็คอิน" ในรายการที่ยังไม่หมดเวลา');
 
     const tinker = (php) => new Promise((resolve, reject) => {
-        execFile('php', ['artisan', 'tinker', `--execute=${php}`], { cwd: process.cwd() }, (err, stdout, stderr) => {
+        execFile('php', ['artisan', 'tinker', `--execute=${php}`], { cwd: process.cwd(), timeout: 120000 }, (err, stdout, stderr) => {
             if (err) return reject(new Error(err.message + ' | ' + stderr));
             const m = stdout.match(/RESULT:([\s\S]*?)(?:\r?\n|$)/);
             resolve(m ? m[1].trim() : null);
         });
     });
 
+    // คำสั่งยาว/มี quote เยอะอย่าง --execute จะพังบน Windows และการส่ง "tinker <file>" จะค้างไม่จบ
+    // จึงเขียน logic ไว้เป็นไฟล์ แล้วเรียกผ่าน require ใน --execute ซึ่งจบเรียบร้อยเสมอ
+    const BASELINE_FILE = 'storage/app/verify-baseline.json';
+    const RESTORE_FILE = 'storage/app/verify-restore.php';
+    const tinkerFile = (file) => new Promise((resolve, reject) => {
+        execFile('php', ['artisan', 'tinker', `--execute=require base_path('${file}');`],
+            { cwd: process.cwd(), timeout: 120000 }, (err, stdout, stderr) => {
+                if (err) return reject(new Error(err.message + ' | ' + stderr));
+                const m = stdout.match(/RESULT:([\s\S]*?)(?:\r?\n|$)/);
+                resolve(m ? m[1].trim() : null);
+            });
+    });
+
 // ---------- ส่วนที่ 1: ใบจองหมดเวลา ----------
+    // จำ snapshot ข้อมูลเดโมไว้ก่อน เพื่อให้ล้างเฉพาะสิ่งที่สร้างระหว่างทดสอบ
+    // และคืนค่าเดิมของข้อมูลเดโมที่ถูกย้อนวัน/เปลี่ยนสถานะระหว่างทดสอบ
+    // (ห้าม hardcode รหัส เพราะรหัสถูกสร้างใหม่ทุกครั้งที่ฐานข้อมูลว่าง)
+    const demoBaseline = JSON.parse((await tinker(
+        // ใช้ getAttributes() เพื่อได้ค่าดิบจากฐานข้อมูล (ไม่ผ่าน cast ของ Carbon) แล้วคืนค่าได้ตรงเป๊ะ
+        `echo 'RESULT:'.json_encode(App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))`
+        + `->get()->map(function ($b) { $r = $b->getAttributes(); return [`
+        + `'id'=>$r['booking_id'],'desk'=>$r['desk_id'],'date'=>substr((string) $r['booking_date'],0,10),`
+        + `'slot'=>$r['time_slot'],'start'=>substr((string) $r['start_time'],0,8),'end'=>substr((string) $r['end_time'],0,8),`
+        + `'status'=>$r['booking_status'],'checked_in_at'=>$r['actual_checkin_time'],`
+        + `'photo'=>$r['checkin_photo'],'prompt'=>$r['selfie_prompt'],`
+        + `]; })->all());`,
+    )) || '[]');
+const demoBookingIds = demoBaseline.map((b) => b.id);
+    console.log('   booking_id ของข้อมูลเดโม: ' + (demoBookingIds.join(', ') || '(ไม่มี)'));
+
+    // คืนค่าข้อมูลเดโมให้ตรงกับ snapshot และลบใบจองที่สร้างระหว่างทดสอบ
+    writeFileSync(BASELINE_FILE, JSON.stringify(demoBaseline, null, 2));
+    writeFileSync(RESTORE_FILE, `<?php
+
+use App\\Models\\Booking;
+use App\\Models\\Employee;
+
+$rows = json_decode((string) file_get_contents(__DIR__.'/verify-baseline.json'), true) ?: [];
+$employeeId = Employee::where('employee_email', 'employee@bs-hybrid.test')->value('employee_id');
+
+// ใช้ save() เพื่อให้ event ของ Booking sync สถานะโต๊ะกลับไปตรงด้วย
+foreach ($rows as $row) {
+    $booking = Booking::where('booking_id', $row['id'])->first();
+
+    if (! $booking) {
+        continue;
+    }
+
+    $booking->forceFill([
+        'desk_id' => $row['desk'],
+        'booking_date' => $row['date'],
+        'time_slot' => $row['slot'],
+        'start_time' => $row['start'],
+        'end_time' => $row['end'],
+        'booking_status' => $row['status'],
+        'actual_checkin_time' => $row['checked_in_at'],
+        'checkin_photo' => $row['photo'],
+        'selfie_prompt' => $row['prompt'],
+    ])->save();
+}
+
+Booking::where('employee_id', $employeeId)
+    ->whereNotIn('booking_id', array_column($rows, 'id'))
+    ->forceDelete();
+
+echo 'RESULT:restored';
+`);
+
+    const restoreDemoData = async () => {
+        await tinkerFile(RESTORE_FILE);
+    };
+
     // สร้างใบจอง "หมดเวลา" ของพนักงานคนนี้ โดยย้อนวันที่ใบจองที่เพิ่งสร้าง (ไม่แตะข้อมูลของคนอื่น)
     const liveId = (await tinker(
-        `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id','EMP00000001')->whereDate('booking_date',now()->toDateString())`
+        `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))->whereDate('booking_date',now()->toDateString())`
         + `->where('booking_status','=',App\\Models\\Booking::STATUS_RESERVED)->orderByDesc('booking_id')->value('booking_id') ?? '');`,
     )) || '';
     console.log('   ใบจองวันนี้ที่ใช้ทดสอบ: ' + (liveId || '(ไม่มี)'));
@@ -656,11 +728,8 @@ async function main() {
         check(String(after.desk).toLowerCase() === (after.stillHolding > 0 ? 'reserved' : 'available'),
             `สถานะโต๊ะสอดคล้องกับการปล่อยโต๊ะ (${after.desk}, ผู้ถือที่เหลือ ${after.stillHolding})`);
 
-        // ล้างใบจองที่สร้างระหว่างทดสอบ (คืนข้อมูลเดโมให้เหมือนเดิม)
-        await tinker(
-            `App\\Models\\Booking::whereIn('booking_id',['${liveId}','BKG00000015'])->forceDelete();`
-            + `echo 'RESULT:cleaned';`,
-        );
+        // คืนข้อมูลเดโมกลับเป็นค่าเดิม และล้างใบจองที่จองเพิ่มระหว่างทดสอบ
+        await restoreDemoData();
     }
 
     // ลิงก์เมนูภายใน (ไม่ได้ใส่ data-loading-button) ต้องขึ้นแถบโหลดด้วย
@@ -684,7 +753,7 @@ async function main() {
         // (ใบจองเก่าที่เช็คอินก่อนมีคอลัมน์นี้จะไม่มีค่า ซึ่งถือว่าเป็นกรณี fallback ปกติ)
         // จำค่าเดิมไว้ก่อน แล้วคืนค่ากลับหลังทดสอบเสร็จ เพื่อไม่ให้แก้ข้อมูลเดโมถาวร
         const promptRestore = await tinker(
-            `echo 'RESULT:'.json_encode(App\\Models\\Booking::where('employee_id','EMP00000001')`
+            `echo 'RESULT:'.json_encode(App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))`
             + `->whereNotNull('checkin_photo')->get(['booking_id','selfie_prompt'])->toArray());`,
         );
         let restoreMap = [];
@@ -694,12 +763,12 @@ async function main() {
             restoreMap = [];
         }
         await tinker(
-            `App\\Models\\Booking::where('employee_id','EMP00000001')->whereNotNull('checkin_photo')`
+            `App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))->whereNotNull('checkin_photo')`
             + `->whereNull('selfie_prompt')->update(['selfie_prompt' => 'ยิ้มให้กล้องดูชัด ๆ พร้อมยกมือขวา']);`
             + `echo 'RESULT:stamped';`,
         );
         const hasPhoto = await tinker(
-            `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id','EMP00000001')->whereNotNull('checkin_photo')->count());`,
+            `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))->whereNotNull('checkin_photo')->count());`,
         );
         console.log('   ใบจองที่มีรูปเช็คอิน: ' + hasPhoto);
         await goto('/bookings');
@@ -799,7 +868,7 @@ async function main() {
         console.log(`   คืนค่า selfie_prompt เดิมให้ ${restoreMap.length} ใบจอง`);
     }
 
-    // confirm() ตอบ "ยกเลิก" -> ปุ่มต้องไม่ค้าง disabled
+    // Alpine confirmDialog: กด "ยกเลิก" ใน modal -> ปุ่มต้องไม่ค้าง disabled และไม่ navigate ออก
     // ต้องมีใบจองสถานะ R ก่อน จึงจะมีปุ่ม "ยกเลิก" ให้ทดสอบ
     const pad = (n) => String(n).padStart(2, '0');
     const isoOf = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
@@ -825,7 +894,7 @@ async function main() {
 
         // redirect:'follow' ทำให้ 302 กลายเป็น 200 เสมอ จึงต้องยืนยันจากฐานข้อมูลจริง
         const created = await tinker(
-            `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id','EMP00000001')`
+            `echo 'RESULT:'.(App\\Models\\Booking::where('employee_id',App\\Models\\Employee::where('employee_email','employee@bs-hybrid.test')->value('employee_id'))`
             + `->whereDate('booking_date','${candidate}')`
             + `->where('booking_status','=',App\\Models\\Booking::STATUS_RESERVED)->count());`,
         );
@@ -838,44 +907,82 @@ async function main() {
 
     await goto('/bookings');
     {
-        await cdp.eval(`window.__confirmAnswer = false`);
-        const res = (await cdp.eval(`(() => {
-            const rows = [...document.querySelectorAll('tbody tr')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim());
-            const forms = [...document.querySelectorAll('form')]
-                .filter((f) => f.getAttribute('onsubmit') && !f.hasAttribute('data-loading-form'));
-            if (!forms.length) return JSON.stringify({ noCancelForm: true, all: document.querySelectorAll('form').length, rows });
-            // เลือกปุ่ม "ยกเลิก" ของแถวที่ยังจองอยู่
+        const opened = (await cdp.eval(`(() => {
+            const forms = [...document.querySelectorAll('form[data-confirm]')];
+            if (!forms.length) return JSON.stringify({ noCancelForm: true, all: document.querySelectorAll('form').length,
+                rows: [...document.querySelectorAll('tbody tr')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim()) });
             const f = forms.find((x) => [...x.querySelectorAll('button[type=submit]')]
                 .some((b) => b.textContent.trim() === 'ยกเลิก')) ?? forms[forms.length - 1];
             const b = f.querySelector('button[type=submit]');
             if (!b) return JSON.stringify({ noCancelButton: true, forms: forms.length });
+            window.__confirmForm = f;
+            window.__confirmButton = b;
             const before = b.disabled;
             f.requestSubmit ? f.requestSubmit() : b.click();
-            return JSON.stringify({ before, after: b.disabled, busy: f.dataset.busy ?? null, label: b.textContent.trim() });
+            return JSON.stringify({ before, label: b.textContent.trim(), title: f.dataset.confirmTitle ?? null,
+                message: f.dataset.confirm ?? null });
         })()`)).value;
-        const parsed = typeof res === 'string' && res.startsWith('{') ? JSON.parse(res) : null;
+        const parsed = typeof opened === 'string' && opened.startsWith('{') ? JSON.parse(opened) : null;
         if (!parsed) {
-            check(false, `ผลการตรวจฟอร์มยกเลิกไม่ถูกต้อง (${JSON.stringify(res)})`);
+            check(false, `ผลการตรวจฟอร์มยกเลิกไม่ถูกต้อง (${JSON.stringify(opened)})`);
         } else if (parsed.noCancelForm) {
             if (parsed.rows) parsed.rows.forEach((r) => console.log('   [row] ' + r));
-            check(false, `ไม่พบฟอร์มยกเลิกที่มี confirm (มี ${parsed.all} ฟอร์มทั้งหมด)`);
+            check(false, `ไม่พบฟอร์มยกเลิกที่มี data-confirm (มี ${parsed.all} ฟอร์มทั้งหมด)`);
         } else if (parsed.noCancelButton) {
-            check(false, `พบฟอร์มที่มี confirm แต่ไม่มีปุ่มยกเลิก (${parsed.forms} ฟอร์ม)`);
+            check(false, `พบฟอร์มที่มี data-confirm แต่ไม่มีปุ่มยกเลิก (${parsed.forms} ฟอร์ม)`);
         } else {
-            const r = parsed;
-            check(r.before === false, `ก่อนกด ปุ่ม "${r.label}" ยังกดได้`);
-            check(r.after === false && !r.busy, `ผู้ใช้เลือก "ยกเลิก" ใน confirm แล้วปุ่มไม่ค้าง (disabled=${r.after}, busy=${r.busy})`);
-            const still = (await cdp.eval(`location.pathname`)).value;
-            check(still === '/bookings', `ยังอยู่หน้ารายการ ไม่ได้ navigate ออกไป (${still})`);
+            check(parsed.before === false, `ก่อนกด ปุ่ม "${parsed.label}" ยังกดได้`);
+            check(Boolean(parsed.message), `ฟอร์มส่งข้อความยืนยันมาใน data-confirm (${parsed.title ?? 'ไม่มีหัวข้อ'})`);
+
+            // ต้องมี modal ของระบบเปิดขึ้นมาแทน confirm() ของเบราว์เซอร์
+            await sleep(400);
+            const modal = (await cdp.eval(`(() => {
+                const root = document.querySelector('[x-data="confirmDialog"]');
+                if (!root) return JSON.stringify({ missing: true });
+                const panel = root.querySelector('[role=dialog]') ?? root;
+                const cancelBtn = [...root.querySelectorAll('button')]
+                    .find((b) => b.textContent.trim() === 'ยกเลิก');
+                return JSON.stringify({
+                    display: getComputedStyle(root).display,
+                    visible: root.offsetParent !== null,
+                    title: root.querySelector('#confirm-dialog-title')?.textContent.trim() ?? null,
+                    renderedMessage: root.querySelector('#confirm-dialog-title + p')?.textContent.trim() ?? null,
+                    hasCancel: !!cancelBtn,
+                    confirmText: [...root.querySelectorAll('button')].map((b) => b.textContent.trim()),
+                });
+            })()`)).value;
+            const m = typeof modal === 'string' && modal.startsWith('{') ? JSON.parse(modal) : null;
+            if (!m || m.missing) {
+                check(false, 'ไม่พบ modal ยืนยันของระบบบนหน้า');
+            } else {
+                check(m.display !== 'none', 'Alpine เปิด modal ยืนยันให้เห็นจริง');
+                check(m.renderedMessage === parsed.message, 'ข้อความใน modal ตรงกับ data-confirm ของฟอร์ม');
+                check(m.hasCancel, 'modal มีปุ่ม "ยกเลิก" ให้ผู้ใช้ยกเลิกได้');
+                await cdp.eval(`window.__cancelBtn = window.__cancelBtn
+                    ?? [...document.querySelector('[x-data="confirmDialog"]').querySelectorAll('button')]
+                        .find((b) => b.textContent.trim() === 'ยกเลิก');
+                    window.__cancelBtn?.click();`);
+            }
+
+            await sleep(400);
+            const after = (await cdp.eval(`(() => ({
+                display: getComputedStyle(document.querySelector('[x-data="confirmDialog"]')).display,
+                disabled: window.__confirmButton?.disabled ?? null,
+                busy: window.__confirmForm?.dataset.busy ?? null,
+                path: location.pathname,
+                native: window.__nativeConfirmCalls ?? -1,
+            }))()`)).value;
+            check(after.display === 'none', 'กด "ยกเลิก" แล้ว modal ปิด');
+            check(after.disabled === false && !after.busy,
+                `กด "ยกเลิก" แล้วปุ่มไม่ค้าง (disabled=${after.disabled}, busy=${after.busy})`);
+            check(after.path === '/bookings', `ยังอยู่หน้ารายการ ไม่ได้ navigate ออกไป (${after.path})`);
+            check(after.native === 0, `ไม่มีการเรียก confirm() ของเบราว์เซอร์ (${after.native} ครั้ง)`);
         }
     }
 
-    // ล้างใบจองที่จองเพิ่มเพื่อทดสอบ ให้ข้อมูลเดโมกลับไปเหมือนเดิม
-    await tinker(
-        `App\\Models\\Booking::where('employee_id','EMP00000001')->whereDate('booking_date','>=',now()->toDateString())`
-        + `->where('booking_status','=',App\\Models\\Booking::STATUS_RESERVED)->forceDelete();`
-        + `echo 'RESULT:cleaned';`,
-    );
+    // คืนข้อมูลเดโมกลับเป็นค่าเดิม ให้ผลทดสอบซ้ำได้โดยไม่ต้อง seed ใหม่
+    await restoreDemoData();
+    [BASELINE_FILE, RESTORE_FILE].forEach((f) => rmSync(f, { force: true }));
 
     console.log('\n--- สรุป ---');
     console.log(`ผ่าน ${pass} / ไม่ผ่าน ${fail}`);

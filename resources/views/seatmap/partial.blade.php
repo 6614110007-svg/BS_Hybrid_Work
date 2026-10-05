@@ -2,12 +2,13 @@
 <div class="grid gap-4 lg:grid-cols-3" data-seatmap-body>
     @forelse ($zones as $zone)
         <section class="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-2">
-            <header class="mb-3 flex items-center justify-between">
-                <h2 class="font-semibold text-gray-800">{{ $zone->zone_name }}</h2>
-                <span class="text-xs text-gray-500">
-                    {{ $zone->desks->count() }} โต๊ะ · ใช้งานได้ {{ $zone->desks->reject->isMaintenance()->count() }}
-                </span>
-            </header>
+            {{-- Banner ประจำโซน: รูปปก + คำอธิบายบรรยากาศ + จำนวนโต๊ะว่างแบบ real-time --}}
+            @include('components.zone-header', [
+                'zone' => $zone,
+                'summary' => $zoneSummaries[$zone->zone_id] ?? null,
+            ])
+
+            <h3 class="mb-3 mt-4 text-sm font-semibold text-gray-800">ผังโต๊ะ</h3>
 
             @if ($zone->desks->isEmpty())
                 <p class="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">โซนนี้ยังไม่มีโต๊ะ</p>

@@ -16,7 +16,7 @@ trait HasGeneratedId
             $key = $model->getKeyName();
 
             if (blank($model->getAttribute($key))) {
-                $model->setAttribute($key, IdSequence::next(static::idPrefix(), $model->getTable(), $key));
+                $model->setAttribute($key, IdSequence::next($model->generatedIdPrefix(), $model->getTable(), $key));
             }
         });
     }
@@ -25,4 +25,13 @@ trait HasGeneratedId
      * รหัสนำหน้า 3 ตัวอักษรของแต่ละตาราง
      */
     abstract public static function idPrefix(): string;
+
+    /**
+     * prefix ที่ใช้ออกรหัสจริง (ค่าเริ่มต้นคือ idPrefix)
+     * โมเดลที่ต้องการแยกลำดับตามช่วงเวลา เช่น EMP + ปีเดือน ให้ override เมธอดนี้
+     */
+    public static function generatedIdPrefix(): string
+    {
+        return static::idPrefix();
+    }
 }

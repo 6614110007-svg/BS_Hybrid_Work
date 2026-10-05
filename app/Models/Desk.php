@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasGeneratedId;
+use App\Support\DeskGrid;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -95,6 +96,95 @@ class Desk extends Model
         $parts = array_map('trim', explode(',', (string) $this->map_position));
 
         return [(int) ($parts[0] ?? 0), (int) ($parts[1] ?? 0)];
+    }
+
+    /**
+     * แปลงพิกัด grid เป็นรูปแบบที่เก็บลงฐานข้อมูล
+     */
+    public static function formatPosition(int $column, int $row): string
+    {
+        return $column.','.$row;
+    }
+
+    /**
+     * เลขโต๊ะถัดไปที่แนะนำ นับจากโต๊ะที่มีเลขสูงสุดในโซนนั้น
+     *
+     * ตัวอย่าง: โซนที่มี A01, A02, A03 จะได้ A04
+     */
+    public static function suggestNumber(?string $zoneId): ?string
+    {
+        if (! $zoneId) {
+            return null;
+        }
+
+        $numbers = static::query()
+            ->where('zone_id', $zoneId)
+            ->pluck('desk_number');
+
+        if ($numbers->isEmpty()) {
+            return 'A01';
+        }
+
+        $latest = null;
+        $latestPrefix = '';
+        $latestValue = -1;
+        $latestWidth = 0;
+
+        foreach ($numbers as $number) {
+            if (preg_match('/^(\D*)(\d+)$/', (string) $number, $matches) !== 1) {
+                continue;
+            }
+
+            [, $prefix, $digits] = $matches;
+            $value = (int) $digits;
+
+            // เทียบเป็นตัวเลขจริง ไม่ใช่ lexicographic เพราะ A9 มากกว่า A10 ในการเรียงข้อความ
+            if ($value <= $latestValue) {
+                continue;
+            }
+
+            $latest = $number;
+            $latestPrefix = $prefix;
+            $latestValue = $value;
+            $latestWidth = strlen($digits);
+        }
+
+        if ($latest === null) {
+            return null;
+        }
+
+        $next = (string) ($latestValue + 1);
+
+        // ขยายความกว้างเมื่อเลขท้ายเต็มหลัก เช่น A09 → A10
+        return $latestPrefix.str_pad($next, $latestWidth, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * หาช่อง grid ที่ยังว่างในโซน โดยไล่จากบนลงล่างซ้ายไปขวา
+     * คืนค่า "column,row" หรือ null เมื่อผังเต็ม
+     */
+    public static function suggestGridPosition(?string $zoneId, int $maxColumn = DeskGrid::MAX_COLUMN, int $maxRow = DeskGrid::MAX_ROW): ?string
+    {
+        if (! $zoneId) {
+            return null;
+        }
+
+        $taken = [];
+
+        foreach (static::query()->where('zone_id', $zoneId)->pluck('map_position') as $value) {
+            [$x, $y] = DeskGrid::parse($value);
+            $taken[$x.','.$y] = true;
+        }
+
+        for ($row = 1; $row <= $maxRow; $row++) {
+            for ($column = 1; $column <= $maxColumn; $column++) {
+                if (! isset($taken[$column.','.$row])) {
+                    return self::formatPosition($column, $row);
+                }
+            }
+        }
+
+        return null;
     }
 
     public function isMaintenance(): bool

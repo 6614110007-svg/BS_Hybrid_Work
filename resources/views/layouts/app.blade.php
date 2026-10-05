@@ -33,9 +33,10 @@
                             <p class="text-sm font-medium text-gray-800">{{ $actor?->actorName() }}</p>
                             <p class="text-xs text-gray-500">{{ $actor?->statusLabel() }}</p>
                         </div>
-                        <div class="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
-                            {{ mb_strtoupper(mb_substr((string) $actor?->actorName(), 0, 1)) }}
-                        </div>
+                        <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-indigo-100"
+                              title="{{ $actor?->actorName() }}">
+                            {!! \App\Support\AnimalAvatar::svg($actor?->avatarKey(), 'h-9 w-9') !!}
+                        </span>
                     </div>
                 </div>
             </header>
@@ -46,6 +47,12 @@
                 @yield('content')
             </main>
         </div>
+
+        @include('components.confirm-dialog')
+
+        @if ($actorNeedsAccountSetup)
+            @include('components.account-setup-modal')
+        @endif
 
         @stack('scripts')
     </body>

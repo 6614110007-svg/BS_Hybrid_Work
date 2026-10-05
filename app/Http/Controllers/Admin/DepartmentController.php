@@ -68,7 +68,7 @@ class DepartmentController extends Controller
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('department', 'department_name')->ignore($department?->getKey()),
+                Rule::unique('department', 'department_name')->ignore($department),
             ],
         ]);
     }

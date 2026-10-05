@@ -83,13 +83,17 @@
                     </div>
 
                     <div class="flex items-center gap-3">
-                        <div class="text-right">
-                            <p class="text-sm font-medium text-gray-800">{{ $actor?->actorName() }}</p>
-                            <p class="text-xs text-gray-500">{{ $actor?->statusLabel() }}</p>
-                        </div>
-                        <div class="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
-                            {{ mb_strtoupper(mb_substr((string) $actor?->actorName(), 0, 1)) }}
-                        </div>
+                        <a href="{{ route('admin.profile.edit') }}"
+                           class="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-gray-100"
+                           title="แก้ไขโปรไฟล์ผู้ดูแลระบบ">
+                            <span class="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-indigo-100">
+                                {!! \App\Support\AnimalAvatar::svg($actor?->avatarKey(), 'h-9 w-9') !!}
+                            </span>
+                            <span class="hidden text-left sm:block">
+                                <span class="block text-sm font-medium leading-tight text-gray-800">{{ $actor?->displayName() }}</span>
+                                <span class="block text-xs leading-tight text-gray-500">{{ $actor?->roleLabel() }}</span>
+                            </span>
+                        </a>
                     </div>
                 </header>
 
@@ -100,6 +104,14 @@
                 </main>
             </div>
         </div>
+
+        @include('components.confirm-dialog')
+
+        {{-- พนักงานที่มี employee_role = 'Administrator' เข้าผ่านหน้า Admin ได้
+             จึงต้องบังคับให้ตั้งรหัสผ่าน/อีเมลครั้งแรกเหมือนหน้าพนักงาน --}}
+        @if ($actorNeedsAccountSetup)
+            @include('components.account-setup-modal')
+        @endif
 
         @stack('scripts')
     </body>

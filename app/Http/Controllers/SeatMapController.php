@@ -64,14 +64,17 @@ class SeatMapController extends Controller
         $minDate = Carbon::today()->toDateString();
         $maxDate = Carbon::today()->addDays((int) config('booking.lead_days', 14))->toDateString();
 
+        $deskStates = $this->deskStates($date, $slotName, $employee->employee_id);
+
         return [
             'zones' => $zones,
+            'zoneSummaries' => $this->zoneSummaries($deskStates),
             'allZones' => $this->zoneOptions(),
             'slots' => TimeSlot::all(),
             'slot' => $slot,
             'date' => $date,
             'zoneId' => $zoneId,
-            'deskStates' => $this->deskStates($date, $slotName, $employee->employee_id),
+            'deskStates' => $deskStates,
             'myBookings' => $this->myBookings($employee, $date, $slotName),
             'minDate' => $minDate,
             'maxDate' => $maxDate,
@@ -103,7 +106,9 @@ class SeatMapController extends Controller
     {
         [$date, $slotName, $zoneId] = $this->criteria($request);
 
-        $states = $this->deskStates($date, $slotName, $current->employee()->employee_id);
+        $allStates = $this->deskStates($date, $slotName, $current->employee()->employee_id);
+
+        $states = $allStates;
 
         if ($zoneId) {
             $states = array_filter($states, fn (array $state) => $state['zone_id'] === $zoneId);
@@ -113,7 +118,52 @@ class SeatMapController extends Controller
             'date' => $date,
             'time_slot' => $slotName,
             'desks' => array_values($states),
+            // จำนวนโต๊ะว่างรายโซน ใช้อัปเดต Banner บนหน้าเลือกจองโต๊ะแบบ real-time
+            // นับจากทุกโซนเสมอ ไม่ต้องกรองตาม zone_id ที่เลือกไว้
+            'zones' => array_values($this->zoneSummaries($allStates)),
         ]);
+    }
+
+    /**
+     * ข้อมูลประจำโซนสำหรับ Banner บนหน้า /dashboard
+     *
+     * รวมรูปปก คำบรรยายบรรยากาศ และจำนวนโต๊ะที่ "ว่างจริง ณ ขณะนี้" (ไม่ใช่แค่จำนวนโต๊ะที่ไม่ปิดซ่อม)
+     * เพื่อให้พนักงานเห็นสถานะความจริงก่อนตัดสินใจเลือกโต๊ะ
+     *
+     * @param  array<string, array{zone_id:string, state:string}>  $deskStates
+     * @return array<string, array{zone_id:string, zone_name:string, description:?string, image:?string, total:int, available:int}>
+     */
+    private function zoneSummaries(array $deskStates): array
+    {
+        $summaries = [];
+
+        Zone::query()
+            ->orderBy('zone_name')
+            ->get(['zone_id', 'zone_name', 'zone_description', 'zone_image'])
+            ->each(function (Zone $zone) use ($deskStates, &$summaries) {
+                $summaries[$zone->zone_id] = [
+                    'zone_id' => $zone->zone_id,
+                    'zone_name' => $zone->zone_name,
+                    'description' => $zone->zone_description,
+                    'image' => $zone->imageUrl(),
+                    'total' => 0,
+                    'available' => 0,
+                ];
+            });
+
+        foreach ($deskStates as $state) {
+            if (! isset($summaries[$state['zone_id']])) {
+                continue;
+            }
+
+            $summaries[$state['zone_id']]['total']++;
+
+            if ($state['state'] === DeskState::AVAILABLE) {
+                $summaries[$state['zone_id']]['available']++;
+            }
+        }
+
+        return $summaries;
     }
 
     /**

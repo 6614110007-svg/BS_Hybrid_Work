@@ -87,10 +87,23 @@ class Booking extends Model
     /**
      * desk_status ถูกคำนวณใหม่ทุกครั้งที่สถานะใบจองเปลี่ยน
      * ทำให้โต๊ะถูกค้นพร้อมข้อมูลที่ถูกต้องเสมอ ไม่ต้องพึ่งเฉพาะ controller
+     *
+     * ถ้าเปลี่ยนโต๊ะ (แก้ไขการจอง) ต้องคำนวณสถานะของโต๊ะเดิมด้วย ไม่เช่นนั้นโต๊ะที่ปล่อย
+     * จะค้างสถานะ Reserved ไว้จนกว่าจะมีใบจองอื่นมาบันทึกทับ
      */
     protected static function booted(): void
     {
-        $sync = fn (self $booking) => app(\App\Services\DeskStatusManager::class)->sync($booking->desk);
+        $sync = function (self $booking) {
+            $manager = app(\App\Services\DeskStatusManager::class);
+
+            $manager->sync($booking->desk);
+
+            $originalDeskId = $booking->getOriginal('desk_id');
+
+            if ($originalDeskId !== null && $originalDeskId !== $booking->desk_id) {
+                $manager->sync(Desk::find($originalDeskId));
+            }
+        };
 
         static::saved($sync);
         static::deleted($sync);
@@ -203,6 +216,17 @@ class Booking extends Model
         return 'booking:checkin-anchor:'.$this->booking_id;
     }
 
+    /**
+     * ล้างเวลาที่กดจองที่บันทึกไว้ใน cache
+     *
+     * ต้องเรียกเมื่อแก้ไขวันที่หรือช่วงเวลาของใบจอง เพราะเดิม anchor ถูกคำนวณจาก
+     * วันที่/สล็อตเดิม ถ้าไม่ล้างจะทำให้เช็คอินได้ผิดวัน
+     */
+    public function forgetCheckinAnchor(): void
+    {
+        Cache::forget($this->checkinAnchorCacheKey());
+    }
+
     public function isReserved(): bool
     {
         return $this->booking_status === self::STATUS_RESERVED;
@@ -263,6 +287,18 @@ class Booking extends Model
     public function isCancelable(): bool
     {
         return $this->isReserved();
+    }
+
+    /**
+     * แก้ไขการจองได้เฉพาะใบที่ "ยังไม่ถึงเวลาเช็คอิน"
+     *
+     * เงื่อนไขเดียวกับการยกเลิก (ต้องเป็นสถานะรอเช็คอิน) และเพิ่มการไม่เอาเวลาที่เลยกำหนดแล้ว
+     * เพราะถึงใบจองจะยังมีสถานะเป็น "จองแล้ว" ในฐานข้อมูล แต่ถ้าเลยเวลาเช็คอินแล้ว
+     * ระบบจะปิดใบจองให้อัตโนมัติ (AutoCancelExpiredBookings) การแก้ไขจึงไม่มีความหมายแล้ว
+     */
+    public function isAmendable(): bool
+    {
+        return $this->isCancelable() && ! $this->isCheckinOverdue();
     }
 
     public static function statusOptions(): array

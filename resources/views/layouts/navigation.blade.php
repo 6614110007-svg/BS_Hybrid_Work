@@ -3,6 +3,7 @@
     $items = [
         ['label' => 'ค้นหาโต๊ะ', 'route' => 'dashboard'],
         ['label' => 'การจองของฉัน', 'route' => 'bookings.mine'],
+        ['label' => 'โปรไฟล์ของฉัน', 'route' => 'profile'],
     ];
 @endphp
 
@@ -25,7 +26,7 @@
             @endforeach
 
             <a href="{{ route('password.edit') }}"
-               class="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100">
+               class="rounded-lg px-3 py-2 text-sm font-medium {{ $current === 'password.edit' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-100' }}">
                 เปลี่ยนรหัสผ่าน
             </a>
 

@@ -1,49 +1,18 @@
 @extends('layouts.guest')
 
-@section('title', 'เข้าสู่ระบบ')
+@section('title', 'ลืมรหัสผ่าน')
 
 @section('content')
-    <h2 class="mb-1 text-xl font-semibold text-gray-800">เข้าสู่ระบบ</h2>
-    <p class="mb-6 text-sm text-gray-500">กรอกอีเมลและรหัสผ่านของคุณ</p>
-
-    <form method="POST" action="{{ route('login') }}" class="space-y-5">
-        @csrf
-
-        <div>
-            <x-input-label for="email" value="อีเมล" />
-            <x-text-input id="email" name="email" type="email" :value="old('email')"
-                          required autofocus autocomplete="username" class="mt-1 block w-full" />
-            <x-input-error :messages="$errors->get('email')" class="mt-1" />
-        </div>
-
-        <div>
-            <div class="flex items-center justify-between gap-2">
-                <x-input-label for="password" value="รหัสผ่าน" />
-                {{-- เปิด Modal ขอกู้คืนรหัสผ่าน (ตรวจอีเมลที่ผูกไว้ตอน First-Login) --}}
-                <button type="button" data-recovery-open
-                        class="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
-                    ลืมรหัสผ่าน?
-                </button>
-            </div>
-            <x-text-input id="password" name="password" type="password" required
-                          autocomplete="current-password" class="mt-1 block w-full" />
-            <x-input-error :messages="$errors->get('password')" class="mt-1" />
-        </div>
-
-        <x-primary-button class="w-full justify-center">เข้าสู่ระบบ</x-primary-button>
-    </form>
-
-    {{-- Modal กู้คืนรหัสผ่าน — ตรวจว่าอีเมลมีในระบบ แล้วแนะนำให้ติดต่อผู้ดูแลระบบ --}}
-    <div x-data="passwordRecovery()" x-cloak x-show="open" @keydown.escape.window="close()"
+    <div x-data="passwordRecoveryPage()" x-cloak x-show="open" @keydown.escape.window="close()"
          class="fixed inset-0 z-50 flex items-center justify-center p-4"
-         role="dialog" aria-modal="true" aria-labelledby="password-recovery-title">
+         role="dialog" aria-modal="true" aria-labelledby="recovery-page-title">
         <div x-show="open" x-transition.opacity class="absolute inset-0 bg-gray-900/60" @click="close()"></div>
 
         <div x-show="open" x-transition.scale.origin.center
              class="relative z-10 w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div class="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4">
                 <div>
-                    <h2 id="password-recovery-title" class="font-semibold text-gray-800">ลืมรหัสผ่าน</h2>
+                    <h2 id="recovery-page-title" class="font-semibold text-gray-800">ลืมรหัสผ่าน</h2>
                     <p class="mt-0.5 text-xs text-gray-500">กรอกอีเมลที่ผูกไว้ตอนตั้งค่าบัญชี</p>
                 </div>
                 <button type="button" @click="close()" aria-label="ปิด"
@@ -55,7 +24,6 @@
             </div>
 
             @if (session('recovery_notice'))
-                {{-- ส่งคำขอสำเร็จ — แสดงขั้นตอนที่ต้องทำต่อ --}}
                 <div class="px-5 py-5">
                     <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                         <div class="flex items-start gap-2.5">
@@ -96,10 +64,10 @@
                     </div>
 
                     <div class="mt-5 flex gap-2">
-                        <button type="button" @click="close()"
-                                class="flex-1 rounded-lg bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-200">
-                            ยกเลิก
-                        </button>
+                        <a href="{{ route('login') }}"
+                           class="flex-1 rounded-lg bg-gray-100 px-4 py-2 text-center text-sm font-semibold text-gray-700 transition hover:bg-gray-200">
+                            กลับไปเข้าสู่ระบบ
+                        </a>
                         <button type="submit"
                                 class="flex-1 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
                             ตรวจสอบอีเมล
@@ -109,36 +77,29 @@
             @endif
         </div>
     </div>
+
+    {{-- ลิงก์สำรองสำหรับผู้ที่ JavaScript ไม่ทำงาน — ลิงก์ไปหน้าเข้าสู่ระบบ --}}
+    <noscript>
+        <p class="mt-4 rounded-lg bg-amber-50 p-3 text-center text-xs text-amber-800">
+            หากหน้าต่างกู้คืนรหัสผ่านไม่แสดง กรุณาเปิดใหม่ที่
+            <a href="{{ route('login') }}" class="font-semibold underline">หน้าเข้าสู่ระบบ</a>
+        </p>
+    </noscript>
 @endsection
 
 @push('scripts')
     <script>
         /**
-         * Modal "ลืมรหัสผ่าน" บนหน้าเข้าสู่ระบบ
+         * หน้ากู้คืนรหัสผ่านแบบเต็มหน้า (เปิดจากลิงก์สำรองเมื่อไม่มี JavaScript)
          *
-         * ใช้ error key 'recovery_email' แยกจาก 'email' ของฟอร์มเข้าสู่ระบบ
-         * ไม่งั้นการกรอกอีเมล/รหัสผ่านผิดจะเผลอเปิด modal นี้ขึ้นมา
-         * ถ้ามี error หรือมีคำขอกู้คืนรหัสผ่านสำเร็จอยู่ใน session
-         * ให้เปิด modal ค้างไว้เลย ไม่ต้องให้ผู้ใช้กดเปิดซ้ำ
+         * เนื้อหาในหน้านี้คือ Modal อยู่แล้ว เพื่อให้ UI เหมือนกันทั้งสองทาง
          */
-        function passwordRecovery() {
+        function passwordRecoveryPage() {
             return {
-                open: @js($errors->has('recovery_email') || session('recovery_notice') !== null),
-
-                init() {
-                    document.querySelectorAll('[data-recovery-open]').forEach((button) => {
-                        button.addEventListener('click', () => {
-                            this.open = true;
-                        });
-                    });
-
-                    this.$watch('open', (value) => {
-                        document.body.classList.toggle('overflow-hidden', value);
-                    });
-                },
+                open: true,
 
                 close() {
-                    this.open = false;
+                    window.location.href = @json(route('login'));
                 },
             };
         }

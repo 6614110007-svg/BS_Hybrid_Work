@@ -88,7 +88,8 @@
                                 </a>
 
                                 <form method="POST" action="{{ route('admin.employees.destroy', $employee) }}"
-                                      onsubmit="return confirm('ลบพนักงานคนนี้หรือไม่?');">
+                                      data-confirm="พนักงาน {{ $employee->employee_fullname }} ({{ $employee->employee_id }}) จะถูกลบถาวร ยืนยันหรือไม่?"
+                                      data-confirm-title="ลบพนักงาน">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit" class="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">

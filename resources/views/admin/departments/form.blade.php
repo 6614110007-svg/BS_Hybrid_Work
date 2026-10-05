@@ -12,7 +12,7 @@
         @endif
 
         <div>
-            <x-input-label for="department_name" value="ชื่อแผนก" />
+            <x-input-label for="department_name" value="ชื่อแผนก" required />
             <x-text-input id="department_name" name="department_name" :value="old('department_name', $department?->department_name)"
                           required maxlength="255" class="mt-1 block w-full" />
             <x-input-error :messages="$errors->get('department_name')" class="mt-1" />

@@ -31,6 +31,8 @@ class Zone extends Model
 
     protected $fillable = [
         'zone_name',
+        'zone_description',
+        'zone_image',
         'zone_total_desks',
     ];
 
@@ -44,6 +46,14 @@ class Zone extends Model
     public static function idPrefix(): string
     {
         return 'ZON';
+    }
+
+    /**
+     * เตรียม URL รูปปกโซนสำหรับแสดงผล (null = ยังไม่มีรูป ให้ UI ใช้ placeholder)
+     */
+    public function imageUrl(): ?string
+    {
+        return $this->zone_image ? asset('storage/'.$this->zone_image) : null;
     }
 
     public function desks(): HasMany

@@ -355,6 +355,301 @@ function bookingFilters(config) {
 }
 
 Alpine.data('bookingFilters', bookingFilters);
+Alpine.data('confirmDialog', confirmDialog);
+Alpine.data('accountSetup', accountSetup);
+Alpine.data('zoneLiveCounts', zoneLiveCounts);
+Alpine.data('deskNumberSuggest', deskNumberSuggest);
+
+/**
+ * Modal ยืนยันการทำรายการ แทน window.confirm ของเบราว์เซอร์
+ *
+ * ฟอร์มที่ต้องการยืนยันใส่ attribute:
+ *   data-confirm        = ข้อความถาม (บังคับ)
+ *   data-confirm-title  = หัวข้อ modal (ไม่บังคับ)
+ *   data-confirm-text   = ข้อความบนปุ่มยืนยัน (ไม่บังคับ)
+ *   data-confirm-tone   = danger | primary (ไม่บังคับ)
+ */
+function confirmDialog() {
+    return {
+        open: false,
+        title: 'ยืนยันการดำเนินการ',
+        message: '',
+        confirmText: 'ยืนยัน',
+        tone: 'danger',
+        pendingForm: null,
+        lastFocused: null,
+
+        init() {
+            window.addEventListener('app:confirm-request', (event) => {
+                this.openDialog(event.detail);
+            });
+        },
+
+        openDialog(detail) {
+            this.lastFocused = document.activeElement;
+            this.title = detail.title || 'ยืนยันการดำเนินการ';
+            this.message = detail.message || 'คุณแน่ใจหรือไม่ว่าต้องการดำเนินการต่อ';
+            this.confirmText = detail.confirmText || 'ยืนยัน';
+            this.tone = detail.tone === 'primary' ? 'primary' : 'danger';
+            this.pendingForm = detail.form;
+            this.open = true;
+
+            this.$nextTick(() => {
+                this.$refs.cancelButton?.focus();
+            });
+        },
+
+        cancel() {
+            this.open = false;
+            this.pendingForm = null;
+
+            this.$nextTick(() => {
+                this.lastFocused?.focus?.();
+            });
+        },
+
+        approve() {
+            const form = this.pendingForm;
+
+            this.open = false;
+            this.pendingForm = null;
+
+            if (!form) {
+                return;
+            }
+
+            // ปล่อยให้ฟอร์มส่งจริง โดยข้ามตัวจับการยืนยันรอบนี้
+            form.dataset.confirmReleasing = 'true';
+            form.requestSubmit();
+        },
+
+        // กด Escape เพื่อยกเลิก
+        onKeydown(event) {
+            if (event.key === 'Escape') {
+                this.cancel();
+            }
+        },
+    };
+}
+
+/**
+ * ตัวจับฟอร์มที่มี data-confirm (ทำงานใน capture phase)
+ *
+ * ต้องอยู่ก่อนตัวแสดง loading indicator ซึ่งฟังใน bubble phase
+ * เพื่อให้ตอนผู้ใช้ยังกำลังตัดสินใจ ปุ่มยังไม่ถูก disable
+ */
+function startConfirmDialog() {
+    document.addEventListener('submit', (event) => {
+        const form = event.target;
+
+        if (!(form instanceof HTMLFormElement)) {
+            return;
+        }
+
+        // เป็นการส่งซ้ำจากการกด "ยืนยัน" ใน modal ไม่ต้องเปิด modal ซ้ำ
+        if (form.dataset.confirmReleasing === 'true') {
+            delete form.dataset.confirmReleasing;
+
+            return;
+        }
+
+        const message = form.dataset.confirm;
+
+        if (!message) {
+            return;
+        }
+
+        event.preventDefault();
+
+        window.dispatchEvent(new CustomEvent('app:confirm-request', {
+            detail: {
+                form,
+                title: form.dataset.confirmTitle,
+                message,
+                confirmText: form.dataset.confirmText,
+                tone: form.dataset.confirmTone,
+            },
+        }));
+    }, true);
+}
+
+/**
+ * ตั้งค่าบัญชีครั้งแรกหลังผู้ดูแลสร้างพนักงานเข้ามาใหม่
+ *
+ * modal เปิดอัตโนมัติเมื่อ first_login = true และปิดไม่ได้
+ * ผู้ใช้ต้องส่งฟอร์มให้ครบ (ผูกอีเมล/รหัสผ่านใหม่/เลือก avatar) หรือกด "ออกจากระบบ"
+ */
+function accountSetup() {
+    return {
+        open: false,
+
+        init() {
+            this.open = this.$root.dataset.requiresSetup === 'true';
+        },
+
+        // ปิด modal ไม่ได้ ใช้ปุ่ม "ออกจากระบบ" แทน
+        force() {
+            this.open = true;
+        },
+    };
+}
+
+/**
+ * จำนวนโต๊ะสดของแต่ละโซน อัปเดตอัตโนมัติทุก 15 วินาที
+ * ข้อมูลมาจาก GET /admin/zones/realtime
+ */
+function zoneLiveCounts() {
+    return {
+        url: this.$root.dataset.liveUrl,
+        timer: null,
+
+        init() {
+            if (!this.url) {
+                return;
+            }
+
+            this.poll();
+            this.timer = window.setInterval(() => this.poll(), 15000);
+        },
+
+        destroy() {
+            if (this.timer) {
+                window.clearInterval(this.timer);
+            }
+        },
+
+        async poll() {
+            try {
+                const response = await fetch(this.url, { headers: { Accept: 'application/json' } });
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const payload = await response.json();
+
+                (payload.zones ?? []).forEach((zone) => {
+                    this.$root.querySelectorAll(`[data-zone-desks="${CSS.escape(zone.zone_id)}"]`)
+                        .forEach((node) => {
+                            node.textContent = `${zone.desks_count} โต๊ะ`;
+
+                            // ไฮไลต์แถวที่จำนวนเปลี่ยน เพื่อให้ผู้ดูแลเห็นความเคลื่อนไหว
+                            const previous = node.dataset.previousCount;
+
+                            if (previous !== undefined && previous !== String(zone.desks_count)) {
+                                node.classList.add('text-emerald-600', 'font-semibold');
+                                window.setTimeout(() => {
+                                    node.classList.remove('text-emerald-600', 'font-semibold');
+                                }, 1500);
+                            }
+
+                            node.dataset.previousCount = String(zone.desks_count);
+                        });
+                });
+            } catch (error) {
+                // เงียบไว้เมื่อเครือข่ายมีปัญหา
+            }
+        },
+    };
+}
+
+/**
+ * ช่วยแนะนำเลขโต๊ะถัดไปและพิกัด grid ที่ว่าง ในฟอร์มสร้าง/แก้ไขโต๊ะ
+ *
+ * ดึงข้อมูลจาก GET /admin/desks/suggest ทุกครั้งที่เปลี่ยนโซน
+ * เติมค่าให้อัตโนมัติเฉพาะช่องที่ยังว่างหรือยังมีค่าที่ระบบเติมไว้เอง
+ * ผู้ดูแลที่พิมพ์เองแล้วจะไม่ถูกทับ
+ */
+function deskNumberSuggest() {
+    return {
+        url: this.$root.dataset.suggestUrl,
+        loading: false,
+        error: '',
+        hint: '',
+
+        async refresh() {
+            const zoneSelect = this.$refs.zoneSelect;
+            const zoneId = zoneSelect?.value;
+            const isCreate = this.$root.dataset.mode === 'create';
+
+            if (!zoneId) {
+                this.hint = '';
+                this.error = '';
+
+                return;
+            }
+
+            this.loading = true;
+            this.error = '';
+            this.hint = '';
+
+            try {
+                const response = await fetch(`${this.url}?zone_id=${encodeURIComponent(zoneId)}`, {
+                    headers: { Accept: 'application/json' },
+                });
+
+                if (!response.ok) {
+                    this.error = 'ดึงค่าแนะนำไม่สำเร็จ กรุณากรอกเอง';
+
+                    return;
+                }
+
+                const payload = await response.json();
+
+                this.applySuggestion(this.$refs.numberInput, payload.desk_number, isCreate);
+                this.applySuggestion(this.$refs.gridInput, payload.map_position, true);
+
+                const number = payload.desk_number ?? 'ไม่พบเลขถัดไป';
+                const grid = payload.map_position ?? 'ผังเต็มแล้ว';
+
+                this.hint = `แนะนำ: เลขโต๊ะ ${number} · พิกัดผัง ${grid}`;
+            } catch (error) {
+                this.error = 'เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณากรอกเอง';
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        /**
+         * เติมค่าเฉพาะช่องที่ผู้ใช้ยังไม่ได้พิมพ์ หรือที่ค่าเดิมมาจากระบบเอง
+         */
+        applySuggestion(input, value, allowAutoFilled) {
+            if (!input || !value) {
+                return;
+            }
+
+            const current = input.value.trim();
+
+            if (current !== '' && !allowAutoFilled) {
+                return;
+            }
+
+            if (current !== '' && input.dataset.autoFilled === 'true') {
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+
+                return;
+            }
+
+            if (current === '') {
+                input.value = value;
+                input.dataset.autoFilled = 'true';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        },
+
+        init() {
+            // ล้างสถานะ auto-filled เมื่อผู้ใช้เริ่มพิมพ์เอง
+            [this.$refs.numberInput, this.$refs.gridInput].forEach((input) => {
+                input?.addEventListener('input', () => {
+                    delete input.dataset.autoFilled;
+                });
+            });
+
+            this.$root.addEventListener('zone-changed', () => this.refresh());
+        },
+    };
+}
 
 Alpine.start();
 
@@ -406,6 +701,35 @@ function startSeatMapLiveUpdates() {
 
             card.dataset.dotClass = fallback.dot;
             card.dataset.cardClass = fallback.card;
+        });
+
+        // จำนวนโต๊ะว่างรายโซนบน Banner ประจำโซน (ไม่ใช่แค่จำนวนโต๊ะที่ไม่ปิดซ่อม)
+        (payload.zones ?? []).forEach((zone) => {
+            const text = document.querySelector(`[data-zone-count-text="${CSS.escape(zone.zone_id)}"]`);
+
+            if (text) {
+                text.textContent = `${zone.total} โต๊ะ · ใช้งานได้ ${zone.available}`;
+            }
+
+            const dot = document.querySelector(`[data-zone-dot="${CSS.escape(zone.zone_id)}"]`);
+
+            if (dot) {
+                dot.classList.toggle('bg-emerald-400', zone.available > 0);
+                dot.classList.toggle('bg-rose-400', zone.available === 0);
+            }
+
+            // ไฮไลต์ตัวเลขที่เพิ่งเปลี่ยน เพื่อให้เห็นความเคลื่อนไหวชัดเจน
+            const badge = document.querySelector(`[data-zone-available="${CSS.escape(zone.zone_id)}"]`);
+
+            if (badge && badge.dataset.previousAvailable !== String(zone.available)) {
+                badge.classList.add('ring-2', 'ring-emerald-300');
+
+                window.setTimeout(() => {
+                    badge.classList.remove('ring-2', 'ring-emerald-300');
+                }, 1500);
+
+                badge.dataset.previousAvailable = String(zone.available);
+            }
         });
     };
 
@@ -578,6 +902,7 @@ function startLoadingIndicator() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    startConfirmDialog();
     startLoadingIndicator();
     startSeatMapLiveUpdates();
     startAdminRealtime();

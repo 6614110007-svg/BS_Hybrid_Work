@@ -54,7 +54,8 @@
                                 </a>
 
                                 <form method="POST" action="{{ route('admin.desks.destroy', $desk) }}"
-                                      onsubmit="return confirm('ลบโต๊ะนี้หรือไม่?');">
+                                      data-confirm="โต๊ะ {{ $desk->desk_number }} จะถูกลบออกจากระบบ ยืนยันหรือไม่?"
+                                      data-confirm-title="ลบโต๊ะทำงาน">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit" class="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
